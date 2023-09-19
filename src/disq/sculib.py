@@ -2,7 +2,7 @@
 
 #Author: P.P.A. Kotze
 #Date: 1/9/2020
-#Version: 
+#Version:
 #0.1 Initial
 #0.2 Update after feedback and correction from HN email dated 1/8/2020
 #0.3 Rework scu_get and scu_put to simplify
@@ -11,14 +11,18 @@
 #0.6 1/10/2020 added load track tables and start table tracking also as debug added 'field' command for old scu
 #HN: 13/05/2021 Changed the way file name is defined by defining a start time
 ##: 07/10/2021 Added new "save_session14" where file time is no longer added to the file name in this library, but expected to be passed as part of "filename" string argument from calling script.
+# 2023-08-31, Thomas Juerges Refactored the basic access mechanics for an OPC UA server.
 
 #Import of Python available libraries
 import time
-import requests
 import json
+import asyncio, threading, asyncua, logging, queue
+from typing import Union, Any
 
-#scu_ip = '10.96.64.10'
-port = '8080'
+logging.basicConfig(level = logging.INFO)
+logger = logging.getLogger('sculib')
+# Make the ua client less chatty
+logging.getLogger("asyncua").setLevel(logging.WARNING)
 
 #define some preselected sensors for recording into a logfile
 hn_feed_indexer_sensors=[
@@ -53,6 +57,72 @@ hn_feed_indexer_sensors=[
 'acu.general_management_and_controller.current_phase_1',
 'acu.general_management_and_controller.current_phase_2',
 'acu.general_management_and_controller.current_phase_3'
+]
+
+# OPC UA equivalent for the above listed hh_feed_indexer_sensors
+# NOTE: These attributes/sensros are currently missing:
+# *** general_management_and_controller.state
+# *** time.act_time_source
+# *** time.internal_time
+# *** time.external_ptp
+# Helper code that I used:
+# lower = {}
+# for i in scu.attributes.keys():
+#     lower = i.tolower()
+#     lower[lower] = i
+# s = "hn_opcua_feed_indexer_sensors = ["
+# for i in sculib.feed_indexer_sensors:
+#     name = i.replace('acu.', '')
+#     name = name.replace('feed_indexer', 'feedindexer')
+#     a = None
+#     try:
+#         u = lower[name]
+#         s += f"\n'{u}',"
+#     except KeyError as e:
+#         print(f'*** {name}')
+# s += f"\n]"
+# print(f'{s}')
+# s = "hn_opcua_tilt_sensors = ["
+# for i in sculib.hn_tilt_sensors:
+#     name = i.replace('acu.', '')
+#     name = name.replace('feed_indexer', 'feedindexer')
+#     a = None
+#     try:
+#         u = lower[name]
+#         s += f"\n'{u}',"
+#     except KeyError as e:
+#         print(f'*** {name}')
+# s += f"\n]"
+# print(f'{s}')
+hn_opcua_feed_indexer_sensors = [
+'Azimuth.AxisState',
+'Azimuth.p_Set',
+'Azimuth.p_Act',
+'Azimuth.v_Act',
+'Elevation.AxisState',
+'Elevation.p_Set',
+'Elevation.p_Act',
+'Elevation.v_Act',
+'FeedIndexer.AxisState',
+'FeedIndexer.MotorOne.mActTorq',
+'FeedIndexer.MotorOne.mActVelocity',
+'FeedIndexer.MotorTwo.mActTorq',
+'FeedIndexer.MotorTwo.mActVelocity',
+'FeedIndexer.p_Set',
+'FeedIndexer.p_Shape',
+'FeedIndexer.p_Act',
+'FeedIndexer.v_Shape',
+'FeedIndexer.v_Act',
+'Management.ManagementStatus.FiPos',
+'Management.ManagementStatus.PowerStatus.ActPwrCnsm',
+'Management.ManagementStatus.PowerStatus.CurrentPh1',
+'Management.ManagementStatus.PowerStatus.CurrentPh2',
+'Management.ManagementStatus.PowerStatus.CurrentPh3',
+'Management.ManagementStatus.PowerStatus.PowerFactor',
+'Management.ManagementStatus.PowerStatus.VoltagePh1',
+'Management.ManagementStatus.PowerStatus.VoltagePh2',
+'Management.ManagementStatus.PowerStatus.VoltagePh3',
+'Time.DscTime'
 ]
 
 #hn_tilt_sensors is equivalent to "Servo performance"
@@ -96,30 +166,364 @@ hn_tilt_sensors=[
 'acu.pointing.incl_corr_val_el'
 ]
 
-class scu():
-    def __init__(self):
-        self.ip = 'localhost'
-        self.port = '8080'
+hn_opcua_tilt_sensors = [
+'Azimuth.AxisState',
+'Azimuth.p_Set',
+'Azimuth.p_Act',
+'Azimuth.v_Act',
+'Elevation.AxisState',
+'Elevation.p_Set',
+'Elevation.p_Act',
+'Elevation.v_Act',
+'Management.ManagementStatus.FiPos',
+'Management.ManagementStatus.PowerStatus.ActPwrCnsm',
+'Management.ManagementStatus.PowerStatus.CurrentPh1',
+'Management.ManagementStatus.PowerStatus.CurrentPh2',
+'Management.ManagementStatus.PowerStatus.CurrentPh3',
+'Management.ManagementStatus.PowerStatus.PowerFactor',
+'Management.ManagementStatus.PowerStatus.VoltagePh1',
+'Management.ManagementStatus.PowerStatus.VoltagePh2',
+'Management.ManagementStatus.PowerStatus.VoltagePh3',
+'Management.ManagementStatus.TempHumidStatus.TempPSC_Inlet',
+'Management.ManagementStatus.TempHumidStatus.TempPSC_Outlet',
+'Pointing.ActAmbTemp_East',
+'Pointing.ActAmbTemp_South',
+'Pointing.ActAmbTemp_West',
+'Pointing.TiltCorrVal_Az',
+'Pointing.TiltCorrVal_El',
+'Pointing.TiltTemp_One',
+'Pointing.TiltXArcsec_One',
+'Pointing.TiltXArcsec_Two',
+'Pointing.TiltXFilt_One',
+'Pointing.TiltXFilt_Two',
+'Pointing.TiltXRaw_One',
+'Pointing.TiltXRaw_Two',
+'Pointing.TiltXTemp_Two',
+'Pointing.TiltYArcsec_One',
+'Pointing.TiltYArcsec_Two',
+'Pointing.TiltYFilt_One',
+'Pointing.TiltYFilt_Two',
+'Pointing.TiltYRaw_One',
+'Pointing.TiltYRaw_Two',
+'Time.DscTime'
+]
+
+async def handle_exception(e: Exception) -> None:
+    logger.error(f'*** Exception caught\n{e}')
+
+def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
+    call = asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop).result().call_method
+    id = f'{node.nodeid.NamespaceIndex}:{asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop).result().Text}'
+    def fn(*args) -> Any:
+        try:
+            return asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
+        except Exception as e:
+            asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+    return fn
+
+def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
+    class opc_ua_rw_attribute:
+        @property
+        def value(self) -> Any:
+            try:
+                return asyncio.run_coroutine_threadsafe(node.get_value(), event_loop).result()
+            except Exception as e:
+                asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+        @value.setter
+        def value(self, _value: Any) -> None:
+            try:
+                asyncio.run_coroutine_threadsafe(node.set_value(_value), event_loop).result()
+            except Exception as e:
+                asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+    return opc_ua_rw_attribute()
+
+def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
+    class opc_ua_ro_attribute:
+        @property
+        def value(self) -> Any:
+            try:
+                return asyncio.run_coroutine_threadsafe(node.get_value(), event_loop).result()
+            except Exception as e:
+                asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+    return opc_ua_ro_attribute()
+
+class SubscriptionHandler:
+    def __init__(self, subscription_queue: queue.Queue, nodes: dict) -> None:
+        self.subscription_queue = subscription_queue
+        self.nodes = nodes
+    def datachange_notification(self, node: asyncua.Node, value: Any, data: asyncua.ua.DataChangeNotification) -> None:
+        """
+        Callback for an asyncua subscription.
+        This method will be called when an asyncua.Client receives a data change
+        message from an OPC UA server.
+        """
+        name = self.nodes[node]
+        source_timestamp = data.monitored_item.Value.SourceTimestamp.timestamp()
+        server_timestamp = data.monitored_item.Value.ServerTimestamp.timestamp()
+        value_for_queue = {'name': name, 'node': node, 'value': value, 'source_timestamp': source_timestamp, 'server_timestamp': server_timestamp, 'data': data}
+        self.subscription_queue.put(value_for_queue, block = True, timeout = 0.1)
+
+class scu:
+    """
+    Small ibrary that eases the pain when connecting to an OPC UA server and calling methods on it, reading or writing attributes.
+    HOW TO
+    ------
+    # Import the library:
+    import sculib
+    # Instantiate an scu object. I provide here the defaults which can be
+    # overwritten by specifying the named parameter.
+    scu = sculib.scu(host = 'localhost', port = 4840, endpoint = '', namespace = 'http://skao.int/DS_ICD/', timeout = 10.0)
+    # Done.
+
+    # All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
+    scu.get_node_list()
+
+    # You will notice that the keys in the nodes dictionary map the hierarchy
+    # in the OPC UA server to a "dotted" notation. If, for example, in the
+    # PLC_PRG node hierarchy a node "PLC_PRG -> Management -> Slew2AbsAzEl"
+    # exists, the then key for this node will be "Management.Slew2AbsAzEl".
+
+    # Therefore nodes can easily be accessed by their hierarchical name.
+    node = scu.nodes['Tracking.TrackStatus.tr_initOk']
+
+    # Every value in the dictionary exposes the full OPC UA functionality for a
+    # node.
+    # NOTE: When accessing nodes directly, it is mandatory to await any calls.
+    node_name = (await (node.read_display_name()).Text
+
+    #
+    # The methods that are below the PLC_PRG node's hierarchy can be accessed
+    # through the commands dictionary:
+    scu.get_command_list()
+
+    # Again, each command has a name that is directly mapped from the location
+    # of the command in the hierarchy below the PLC_PRG node.
+    # When you want to call a command, please check the ICD for the parameters
+    # that the commands expects. Checking for the correctness of the parameters
+    # is not done here in sculib but in the PLC's OPC UA server.
+    # Once the parameters are in order, calling a command is really simple:
+    result = scu.commands['COMMAND_NAME'](YOUR_PARAMETERS)
+
+    # For instance, command the PLC to slew to a new position:
+    az = 182.0; el = 21.8; az_v = 1.2; el_v = 2.1
+    result = scu.commands['Management.Slew2AbsAzEl'](az, el, az_v, el_v)
+
+    # The OPC UA server also provides read-writeable and read-only variables,
+    # commonly called in OPC UA "attributes". An attribute's value can easily
+    # be read:
+    scu.nodes['Azimuth.p_Set'].value
+
+    # If an attribute is writable, then a simple assignment does the trick:
+    scu.nodes['Azimuth.p_Set'].value = 1.2345
+
+    # In case an attribute is not writeable, the OPC UA server will report an
+    # error:
+    scu.attributes['Azimuth.p_Set'].value = 10
+
+    *** Exception caught
+    "User does not have permission to perform the requested operation."(BadUserAccessDenied)
+    """
+    def __init__(self, host: str = 'localhost', port: int = 4840, endpoint: str = '', namespace: str = 'http://skao.int/DS_ICD/', timeout: float = 10.0) -> None:
+        logger.info('Initialising sculib. This will take about 10s...')
+        self.init_called = False
+        self.host = host
+        self.port = port
+        self.endpoint = endpoint
+        self.namespace = namespace
+        self.timeout = timeout
+        self.event_loop = None
+        self.event_loop_thread = None
+        self.subscription_handler = None
+        self.subscriptions = {}
+        self.subscription_queue = queue.Queue()
+        self.create_and_start_asyncio_event_loop()
+        self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout)
+        self.populate_node_dicts()
         self.debug = True
+        self.init_called = True
+        logger.info('Initialising sculib done.')
+
+    def __del__(self) -> None:
+        self.unsubscribe_all()
+        self.disconnect()
+        if self.event_loop_thread is not None:
+            # Signal the event loop thread to stop.
+            self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+            # Join the event loop thread once it is done processing tasks.
+            self.event_loop_thread.join()
+
+    def run_event_loop(self, event_loop: asyncio.AbstractEventLoop) -> None:
+        # The self.event_loop needs to be stored here. Otherwise asyncio
+        # complains that it has the wrong type when scheduling a coroutine.
+        # Sigh.
+        self.event_loop = event_loop
+        asyncio.set_event_loop(event_loop)
+        event_loop.run_forever()
+
+    def create_and_start_asyncio_event_loop(self) -> None:
+        event_loop = asyncio.new_event_loop()
+        self.event_loop_thread = threading.Thread(target = self.run_event_loop, args = (event_loop,), name = f'asyncio event loop for sculib instance {self.__class__.__name__}', daemon = True,)
+        self.event_loop_thread.start()
+
+    def connect(self, host: str, port: int, endpoint: str, timeout: float) -> None:
+        opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
+        connection = asyncua.Client(opc_ua_server, timeout)
+        _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
+        self.opc_ua_server = opc_ua_server
+        _ = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
+        self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
+        return connection
+
+    def disconnect(self) -> None:
+        connection = self.connection
+        self.connection = None
+        if connection is not None:
+            _ = asyncio.run_coroutine_threadsafe(connection.disconnect(), self.event_loop).result()
+
+    def connection_reset(self) -> None:
+        self.disconnect()
+        self.connect()
+
+    def populate_node_dicts(self) -> None:
+        # Create three dicts:
+        # nodes, attributes, commands
+        # nodes: Contains the entire uasync.Node-tree from and including
+        #   the 'PLC_PRG' node.
+        # attributes: Contains the attributes in the uasync.Node-tree from
+        #   the 'PLC_PRG' node on. The values are callables that return the
+        #   current value.
+        # {Key = Name as in the node hierarchy, value = the uasync.Node}
+        # commands: Contains all callable methods in the uasync.Node-tree
+        #   from the 'PLC_PRG' node on. The values are callables which
+        #   just require the expected parameters.
+        plc_prg = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.ns_idx}:Logic', f'{self.ns_idx}:Application', f'{self.ns_idx}:PLC_PRG']), self.event_loop).result()
+        nodes, attributes, commands = self.get_sub_nodes(plc_prg)
+        # Small fix for the key of the top level node 'PLC_PRG'.
+        plc_prg = nodes.pop('')
+        nodes.update({'PLC_PRG': plc_prg})
+        # Now store the three dicts as members.
+        self.nodes = nodes
+        self.nodes_reversed = {v: k for k, v in nodes.items()}
+        self.attributes = attributes
+        self.attributes_reversed = {v: k for k, v in attributes.items()}
+        self.commands = commands
+        self.commands_reversed = {v: k for k, v in commands.items()}
+
+    def generate_full_node_name(self, node: asyncua.Node, node_name_separator: str = '.', stop_at_node_name: str = 'PLC_PRG') -> str:
+        nodes = asyncio.run_coroutine_threadsafe(node.get_path(), self.event_loop).result()
+        nodes.reverse()
+        node_name = ''
+        for parent_node in nodes:
+            parent_node_name = f'{asyncio.run_coroutine_threadsafe(parent_node.read_display_name(), self.event_loop).result().Text}'
+            if parent_node_name == stop_at_node_name:
+                break
+            else:
+                node_name = f'{parent_node_name}{node_name_separator}{node_name}'
+        return node_name.strip('.')
+
+    def get_sub_nodes(self, node: asyncua.Node, node_name_separator: str = '.') -> (dict, dict, dict):
+        nodes = {}
+        attributes = {}
+        commands = {}
+        node_name = self.generate_full_node_name(node)
+        # Do not add the InputArgument and OutputArgument nodes.
+        if node_name.endswith('.InputArguments', node_name.rfind('.')) is True or node_name.endswith('.OutputArguments', node_name.rfind('.')) is True:
+            return nodes, attributes, commands
+        else:
+            nodes[node_name] = node
+        node_class = asyncio.run_coroutine_threadsafe(node.read_node_class(), self.event_loop).result().value
+        # node_class = 1: Normal node with children
+        # node_class = 2: Attribute
+        # node_class = 4: Method
+        if node_class == 1:
+            children = asyncio.run_coroutine_threadsafe(node.get_children(), self.event_loop).result()
+            child_nodes = {}
+            for child in children:
+                child_nodes, child_attributes, child_commands = self.get_sub_nodes(child)
+                nodes.update(child_nodes)
+                attributes.update(child_attributes)
+                commands.update(child_commands)
+        elif node_class == 2:
+            # An attribute. Add it to the attributes dict.
+            # attributes[node_name] = node.get_value
+            #
+            # Check if RO or RW and call the respective creator functions.
+            # if node.figure_out_if_RW_or_RO is RW:
+            attributes[node_name] = create_rw_attribute(node, self.event_loop)
+            #else:
+            # attributes[node_name] = create_ro_attribute(node, self.event_loop)
+        elif node_class == 4:
+            # A command. Add it to the commands dict.
+            commands[node_name] = create_command_function(node, self.event_loop)
+        return nodes, attributes, commands
+
+    def get_node_list(self) -> None:
+        info = ''
+        for key in self.nodes.keys():
+            info += f'{key}\n'
+        logger.info(info)
+        return list(self.nodes.keys())
+    def get_command_list(self) -> None:
+        info = ''
+        for key in self.commands.keys():
+            info += f'{key}\n'
+        logger.info(info)
+        return list(self.commands.keys())
+    def get_attribute_list(self) -> None:
+        info = ''
+        for key in self.attributes.keys():
+            info += f'{key}\n'
+        logger.info(info)
+        return list(self.attributes.keys())
+
+    def subscribe(self, attributes: Union[str, list[str]] = hn_opcua_tilt_sensors, period: int = 100, data_queue: queue.Queue = None) -> int:
+        if data_queue is None:
+            data_queue = self.subscription_queue
+        subscription_handler = SubscriptionHandler(data_queue, self.nodes_reversed)
+        if not isinstance(attributes, list):
+            attributes = [attributes,]
+        nodes = []
+        for attribute in attributes:
+            nodes.append(self.nodes[attribute])
+        subscription = asyncio.run_coroutine_threadsafe(self.connection.create_subscription(period, subscription_handler), self.event_loop).result()
+        handle = asyncio.run_coroutine_threadsafe(subscription.subscribe_data_change(nodes), self.event_loop).result()
+        id = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+        self.subscriptions[id] = {'handle': handle, 'nodes': nodes, 'subscription': subscription}
+        return id
+
+    def unsubscribe(self, id: int) -> None:
+        subscription = self.subscriptions.pop(id)
+        _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].unsubscribe(subscription['handle']), self.event_loop).result()
+
+    def unsubscribe_all(self) -> None:
+        while len(self.subscriptions) > 0:
+            id, subscription = self.subscriptions.popitem()
+            _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].unsubscribe(subscription['handle']), self.event_loop).result()
+
+    def get_subscription_values(self) -> list[dict]:
+        values = []
+        while not self.subscription_queue.empty():
+            values.append(self.subscription_queue.get(block = False, timeout = 0.1))
+        return values
 
     #Direct SCU webapi functions based on urllib PUT/GET
     def feedback(self, r):
         if self.debug == True:
-            print('***Feedback:', r.request.url, r.request.body)
-            print(r.reason, r.status_code)
-            print("***Text returned:")
-            print(r.text)
+            logger.info('***Feedback:', r.request.url, r.request.body)
+            logger.info(r.reason, r.status_code)
+            logger.info("***Text returned:")
+            logger.info(r.text)
         elif r.status_code != 200:
-            print('***Feedback:', r.request.url, r.request.body)
-            print(r.reason, r.status_code)
-            print("***Text returned:")
-            print(r.text)
-            #print(r.reason, r.status_code)
-            #print()
+            logger.info('***Feedback:', r.request.url, r.request.body)
+            logger.info(r.reason, r.status_code)
+            logger.info("***Text returned:")
+            logger.info(r.text)
+            #logger.info(r.reason, r.status_code)
+            #logger.info()
 
     #	def scu_get(device, params = {}, r_ip = self.ip, r_port = port):
     def scu_get(self, device, params = {}):
-        '''This is a generic GET command into http: scu port + folder 
+        '''This is a generic GET command into http: scu port + folder
         with params=payload'''
         URL = 'http://' + self.ip + ':' + self.port + device
         r = requests.get(url = URL, params = params)
@@ -127,7 +531,7 @@ class scu():
         return(r)
 
     def scu_put(self, device, payload = {}, params = {}, data=''):
-        '''This is a generic PUT command into http: scu port + folder 
+        '''This is a generic PUT command into http: scu port + folder
         with json=payload'''
         URL = 'http://' + self.ip + ':' + self.port + device
         r = requests.put(url = URL, json = payload, params = params, data = data)
@@ -135,7 +539,7 @@ class scu():
         return(r)
 
     def scu_delete(self, device, payload = {}, params = {}):
-        '''This is a generic DELETE command into http: scu port + folder 
+        '''This is a generic DELETE command into http: scu port + folder
         with params=payload'''
         URL = 'http://' + self.ip + ':' + self.port + device
         r = requests.delete(url = URL, json = payload, params = params)
@@ -147,36 +551,36 @@ class scu():
     #command authority
     def command_authority(self, action):
         #1 get #2 release
-        print('command authority: ', action)
+        logger.info('command authority: ', action)
         authority={'Get': 1, 'Release': 2}
-        self.scu_put('/devices/command', 
+        self.scu_put('/devices/command',
             {'path': 'acu.command_arbiter.authority',
             'params': {'action': authority[action]}})
 
     #commands to DMC state - dish management controller
     def interlock_acknowledge_dmc(self):
-        print('reset dmc')
+        logger.info('reset dmc')
         self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.interlock_acknowledge'})
 
     def reset_dmc(self):
-        print('reset dmc')
-        self.scu_put('/devices/command', 
+        logger.info('reset dmc')
+        self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.reset'})
 
     def activate_dmc(self):
-        print('activate dmc')
+        logger.info('activate dmc')
         self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.activate'})
 
     def deactivate_dmc(self):
-        print('deactivate dmc')
-        self.scu_put('/devices/command', 
+        logger.info('deactivate dmc')
+        self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.deactivate'})
 
     def move_to_band(self, position):
         bands = {'Band 1': 1, 'Band 2': 2, 'Band 3': 3, 'Band 4': 4, 'Band 5a': 5, 'Band 5b': 6, 'Band 5c': 7}
-        print('move to band:', position)
+        logger.info('move to band:', position)
         if not(isinstance(position, str)):
             self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.move_to_band',
@@ -185,9 +589,9 @@ class scu():
             self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.move_to_band',
              'params': {'action': bands[position]}})
-            
+
     def abs_azel(self, az_angle, el_angle):
-        print('abs az: {:.4f} el: {:.4f}'.format(az_angle, el_angle))
+        logger.info('abs az: {:.4f} el: {:.4f}'.format(az_angle, el_angle))
         self.scu_put('/devices/command',
             {'path': 'acu.dish_management_controller.slew_to_abs_pos',
              'params': {'new_azimuth_absolute_position_set_point': az_angle,
@@ -195,61 +599,61 @@ class scu():
 
     #commands to ACU
     def activate_az(self):
-        print('act azimuth')
-        self.scu_put('/devices/command', 
+        logger.info('act azimuth')
+        self.scu_put('/devices/command',
             {'path': 'acu.elevation.activate'})
 
     def activate_el(self):
-        print('activate elevation')
-        self.scu_put('/devices/command', 
+        logger.info('activate elevation')
+        self.scu_put('/devices/command',
             {'path': 'acu.elevation.activate'})
 
     def deactivate_el(self):
-        print('deactivate elevation')
-        self.scu_put('/devices/command', 
+        logger.info('deactivate elevation')
+        self.scu_put('/devices/command',
             {'path': 'acu.elevation.deactivate'})
 
     def abs_azimuth(self, az_angle, az_vel):
-        print('abs az: {:.4f} vel: {:.4f}'.format(az_angle, az_vel))
+        logger.info('abs az: {:.4f} vel: {:.4f}'.format(az_angle, az_vel))
         self.scu_put('/devices/command',
             {'path': 'acu.azimuth.slew_to_abs_pos',
              'params': {'new_axis_absolute_position_set_point': az_angle,
-              'new_axis_speed_set_point_for_this_move': az_vel}})    
+              'new_axis_speed_set_point_for_this_move': az_vel}})
 
     def abs_elevation(self, el_angle, el_vel):
-        print('abs el: {:.4f} vel: {:.4f}'.format(el_angle, el_vel))
+        logger.info('abs el: {:.4f} vel: {:.4f}'.format(el_angle, el_vel))
         self.scu_put('/devices/command',
             {'path': 'acu.elevation.slew_to_abs_pos',
              'params': {'new_axis_absolute_position_set_point': el_angle,
-              'new_axis_speed_set_point_for_this_move': el_vel}}) 
+              'new_axis_speed_set_point_for_this_move': el_vel}})
 
     def load_static_offset(self, az_offset, el_offset):
-        print('offset az: {:.4f} el: {:.4f}'.format(az_offset, el_offset))
+        logger.info('offset az: {:.4f} el: {:.4f}'.format(az_offset, el_offset))
         self.scu_put('/devices/command',
             {'path': 'acu.tracking_controller.load_static_tracking_offsets.',
              'params': {'azimuth_tracking_offset': az_offset,
                         'elevation_tracking_offset': el_offset}})     #Track table commands
 
 
-    
+
     def load_program_track(self, load_type, entries, t=[0]*50, az=[0]*50, el=[0]*50):
-        print(load_type)    
+        logger.info(load_type)
         LOAD_TYPES = {
-            'LOAD_NEW' : 1, 
-            'LOAD_ADD' : 2, 
+            'LOAD_NEW' : 1,
+            'LOAD_ADD' : 2,
             'LOAD_RESET' : 3}
-        
+
         #table selector - to tidy for future use
         ptrackA = 11
-        
+
         TABLE_SELECTOR =  {
             'pTrackA' : 11,
             'pTrackB' : 12,
             'oTrackA' : 21,
             'oTrackB' : 22}
-        
+
         #funny thing is SCU wants 50 entries, even for LOAD RESET! or if you send less then you have to pad the table
-       
+
         if entries != 50:
             padding = 50 - entries
             t  += [0] * padding
@@ -280,16 +684,16 @@ class scu():
                                   'start_time_mjd': start_time,
                                   'interpol_mode': SPLINE,
                                   'track_mode': AZ_EL }})
-    
+
     def acu_ska_track(self, BODY):
-        print('acu ska track')
-        self.scu_put('/acuska/programTrack', 
+        logger.info('acu ska track')
+        self.scu_put('/acuska/programTrack',
                 data = BODY)
-        
+
     def acu_ska_track_stoploadingtable(self):
-        print('acu ska track stop loading table')
+        logger.info('acu ska track stop loading table')
         self.scu_put('/acuska/stopLoadingTable')
-        
+
     def format_tt_line(self, t, az,  el, capture_flag = 1, parallactic_angle = 0.0):
         '''something will provide a time, az and el as minimum
         time must alread be absolute time desired in mjd format
@@ -301,45 +705,45 @@ class scu():
         body = ''
         for i in range(len(t)):
             body += self.format_tt_line(t[i], az[i], el[i])
-        return(body)        
+        return(body)
 
     #status get functions goes here
-    
+
     def status_Value(self, sensor):
-        r=self.scu_get('/devices/statusValue', 
+        r=self.scu_get('/devices/statusValue',
               {'path': sensor})
         data = r.json()['value']
-        #print('value: ', data)
+        #logger.info('value: ', data)
         return(data)
 
     def status_finalValue(self, sensor):
-        #print('get status finalValue: ', sensor)
-        r=self.scu_get('/devices/statusValue', 
+        #logger.info('get status finalValue: ', sensor)
+        r=self.scu_get('/devices/statusValue',
               {'path': sensor})
         data = r.json()['finalValue']
-        #print('finalValue: ', data)
+        #logger.info('finalValue: ', data)
         return(data)
 
     def commandMessageFields(self, commandPath):
-        r=self.scu_get('/devices/commandMessageFields', 
+        r=self.scu_get('/devices/commandMessageFields',
               {'path': commandPath})
         return(r)
 
     def statusMessageField(self, statusPath):
-        r=self.scu_get('/devices/statusMessageFields', 
+        r=self.scu_get('/devices/statusMessageFields',
               {'deviceName': statusPath})
         return(r)
-    
+
     #ppak added 1/10/2020 as debug for onsite SCU version
     #but only info about sensor, value itself is murky?
     def field(self, sensor):
         #old field method still used on site
-        r=self.scu_get('/devices/field', 
+        r=self.scu_get('/devices/field',
               {'path': sensor})
         #data = r.json()['value']
         data = r.json()
         return(data)
-    
+
     #logger functions goes here
 
     def create_logger(self, config_name, sensor_list):
@@ -347,35 +751,35 @@ class scu():
         PUT create a config for logging
         Usage:
         create_logger('HN_INDEX_TEST', hn_feed_indexer_sensors)
-        or 
+        or
         create_logger('HN_TILT_TEST', hn_tilt_sensors)
         '''
-        print('create logger')
-        r=self.scu_put('/datalogging/config', 
+        logger.info('create logger')
+        r=self.scu_put('/datalogging/config',
               {'name': config_name,
                'paths': sensor_list})
         return(r)
 
     '''unusual does not take json but params'''
     def start_logger(self, filename):
-        print('start logger: ', filename)
+        logger.info('start logger: ', filename)
         r=self.scu_put('/datalogging/start',
               params='configName=' + filename)
         return(r)
 
     def stop_logger(self):
-        print('stop logger')
+        logger.info('stop logger')
         r=self.scu_put('/datalogging/stop')
         return(r)
 
     def logger_state(self):
-#        print('logger state ')
+#        logger.info('logger state ')
         r=self.scu_get('/datalogging/currentState')
-        #print(r.json()['state'])
+        #logger.info(r.json()['state'])
         return(r.json()['state'])
 
     def logger_configs(self):
-        print('logger configs ')
+        logger.info('logger configs ')
         r=self.scu_get('/datalogging/configs')
         return(r)
 
@@ -383,16 +787,16 @@ class scu():
         '''
         GET last session
         '''
-        print('Last sessions ')
+        logger.info('Last sessions ')
         r=self.scu_get('/datalogging/lastSession')
         session = (r.json()['uuid'])
         return(session)
-    
+
     def logger_sessions(self):
         '''
         GET all sessions
         '''
-        print('logger sessions ')
+        logger.info('logger sessions ')
         r=self.scu_get('/datalogging/sessions')
         return(r)
 
@@ -402,7 +806,7 @@ class scu():
         Usage:
         session_query('16')
         '''
-        print('logger sessioN query id ')
+        logger.info('logger sessioN query id ')
         r=self.scu_get('/datalogging/session',
              {'id': id})
         return(r)
@@ -414,7 +818,7 @@ class scu():
         Usage:
         session_delete('16')
         '''
-        print('delete session ')
+        logger.info('delete session ')
         r=self.scu_delete('/datalogging/session',
              params= 'id='+id)
         return(r)
@@ -426,10 +830,10 @@ class scu():
         Works in browser display only, reverts when browser refreshed!
         Usage:
         session_rename('16','koos')
-        '''    
-        print('rename session ')
+        '''
+        logger.info('rename session ')
         r=self.scu_put('/datalogging/session',
-             params = {'id': id, 
+             params = {'id': id,
                 'name' : new_name})
         return(r)
 
@@ -437,21 +841,21 @@ class scu():
     def export_session(self, id, interval_ms=1000):
         '''
         EXPORT specific session - by id and with interval
-        output r.text could be directed to be saved to file 
-        Usage: 
+        output r.text could be directed to be saved to file
+        Usage:
         export_session('16',1000)
-        or export_session('16',1000).text 
+        or export_session('16',1000).text
         '''
-        print('export session ')
+        logger.info('export session ')
         r=self.scu_get('/datalogging/exportSession',
-             params = {'id': id, 
+             params = {'id': id,
                 'interval_ms' : interval_ms})
         return(r)
 
     #sorted_sessions not working yet
 
     def sorted_sessions(self, isDescending = 'True', startValue = '1', endValue = '25', sortBy = 'Name', filterType='indexSpan'):
-        print('sorted sessions')
+        logger.info('sorted sessions')
         r=self.scu_get('/datalogging/sortedSessions',
              {'isDescending': isDescending,
               'startValue': startValue,
@@ -467,23 +871,23 @@ class scu():
         Default interval is 1s
         Default is last recorded session
         if specified no error checking to see if it exists
-        Usage: 
+        Usage:
         export_session('16',1000)
-        or export_session('16',1000).text 
+        or export_session('16',1000).text
         '''
         from pathlib import Path
-        print('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
+        logger.info('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
         if session == 'last':
             #get all logger sessions, may be many
             r=self.logger_sessions()
             #[-1] for end of list, and ['uuid'] to get id of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        print('Session id: {} '.format(session))
+        logger.info('Session id: {} '.format(session))
         file_time = str(int(time.time()))
         file_name = str(filename + '_' + file_time + '.csv')
         file_path = Path.cwd()  / 'output' / file_name
-        print('Log file location:', file_path)    
+        logger.info('Log file location:', file_path)
         f = open(file_path, 'a+')
         f.write(file_txt)
         f.close()
@@ -495,75 +899,75 @@ class scu():
         Default interval is 1s
         Default is last recorded session
         if specified no error checking to see if it exists
-        Usage: 
+        Usage:
         export_session('16',1000)
-        or export_session('16',1000).text 
+        or export_session('16',1000).text
         '''
         from pathlib import Path
-        print('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
+        logger.info('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
         if session == 'last':
             #get all logger sessions, may be many
             r=self.logger_sessions()
             #[-1] for end of list, and ['uuid'] to get id of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        print('Session id: {} '.format(session))
+        logger.info('Session id: {} '.format(session))
 ##        file_time = str(int(time.time()))
         file_time = str(int(start))
         file_name = str(filename + '_' + file_time + '.csv')
         file_path = Path.cwd()  / 'output' / file_name
-        print('Log file location:', file_path)    
+        logger.info('Log file location:', file_path)
         f = open(file_path, 'a+')
         f.write(file_txt)
         f.close()
-        
+
     def save_session14(self, filename, interval_ms=1000, session = 'last'):
         '''
         Save session data as CSV after EXPORTing it
         Default interval is 1s
         Default is last recorded session
         if specified no error checking to see if it exists
-        Usage: 
+        Usage:
         export_session('16',1000)
-        or export_session('16',1000).text 
+        or export_session('16',1000).text
         '''
         from pathlib import Path
-        print('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
+        logger.info('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
         if session == 'last':
             #get all logger sessions, may be many
             r=self.logger_sessions()
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        print('Session id: {} '.format(session))
+        logger.info('Session id: {} '.format(session))
         file_name = str(filename + '.csv')
         file_path = Path.cwd()  / 'output' / file_name
-        print('Log file location:', file_path)    
+        logger.info('Log file location:', file_path)
         f = open(file_path, 'a+')
         f.write(file_txt)
         f.close()
-        
-    #Simplified one line commands particular to test section being peformed 
+
+    #Simplified one line commands particular to test section being peformed
 
     #wait seconds, wait value, wait finalValue
     def wait_duration(self, seconds):
-        print('  wait for {:.1f}s'.format(seconds), end="")
+        logger.info('  wait for {:.1f}s'.format(seconds), end="")
         time.sleep(seconds)
-        print(' done *')
+        logger.info(' done *')
 
     def wait_value(self, sensor, value):
-        print('wait until sensor: {} == value {}'.format(sensor, value))
+        logger.info('wait until sensor: {} == value {}'.format(sensor, value))
         while status_Value(sensor) != value:
             time.sleep(1)
-        print(' done *')
+        logger.info(' done *')
 
     def wait_finalValue(self, sensor, value):
-        print('wait until sensor: {} == value {}'.format(sensor, value))
+        logger.info('wait until sensor: {} == value {}'.format(sensor, value))
         while status_finalValue(sensor) != value:
             time.sleep(1)
-        print(' {} done *'.format(value))  
+        logger.info(' {} done *'.format(value))
 
     #Simplified track table functions
-    
+
 
 if __name__ == '__main__':
-   print("main")
+   logger.info("main")
