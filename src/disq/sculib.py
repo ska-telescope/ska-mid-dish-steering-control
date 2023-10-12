@@ -311,10 +311,10 @@ class scu:
     # The OPC UA server also provides read-writeable and read-only variables,
     # commonly called in OPC UA "attributes". An attribute's value can easily
     # be read:
-    scu.nodes['Azimuth.p_Set'].value
+    scu.attributes['Azimuth.p_Set'].value
 
     # If an attribute is writable, then a simple assignment does the trick:
-    scu.nodes['Azimuth.p_Set'].value = 1.2345
+    scu.attributes['Azimuth.p_Set'].value = 1.2345
 
     # In case an attribute is not writeable, the OPC UA server will report an
     # error:
