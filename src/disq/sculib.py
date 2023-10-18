@@ -14,13 +14,13 @@
 # 2023-08-31, Thomas Juerges Refactored the basic access mechanics for an OPC UA server.
 
 import asyncio
+import enum
 import json
 import logging
 import logging.config
 import os
 import queue
 import threading
-import enum
 
 #Import of Python available libraries
 import time
@@ -47,7 +47,7 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
                 print(f"WARNING: Unable to read logging configuration file {disq_log_config_file}")
     else:
         print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
-        
+
     if config is None:
         print("Reverting to basic logging config at level:{default_log_level}")
         logging.basicConfig(level = default_log_level)
@@ -362,9 +362,9 @@ class scu:
     "User does not have permission to perform the requested operation."(BadUserAccessDenied)
     """
     def __init__(self, host: str = 'localhost', port: int = 4840,
-                 endpoint: str = '/dish-structure/server/', 
+                 endpoint: str = '/dish-structure/server/',
                  namespace: str = 'http://skao.int/DS_ICD/',
-                 timeout: float = 10.0, 
+                 timeout: float = 10.0,
                  eventloop: asyncio.AbstractEventLoop=None) -> None:
         logger.info('Initialising sculib')
         self.init_called = False
@@ -417,7 +417,12 @@ class scu:
         connection = asyncua.Client(opc_ua_server, timeout)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
-        _ = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
+        try:
+            _ = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
+        except:
+            # The CETC simulator V1 returns a faulty DscCmdAuthorityEnumType,
+            # where the entry for 3 has no name.
+            pass
         self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
         return connection
 
@@ -535,14 +540,14 @@ class scu:
         dt_name = dt_node_info.Name
         if dt_name == "Boolean" or dt_name == "Double":
             return dt_name
-        
+
         # load_data_type_definitions() called in connect() adds new classes to the asyncua.ua module.
         if dt_name in dir(asyncua.ua):
             if issubclass(getattr(asyncua.ua, dt_name), enum.Enum):
                 return "Enumeration"
 
         return "Unknown"
-    
+
     def get_enum_strings(self, enum_node: str) -> list[str]:
         """
         Get a list of enumeration strings where the index of the list matches the enum value.
@@ -552,9 +557,9 @@ class scu:
         dt_id = asyncio.run_coroutine_threadsafe(node.read_data_type(), self.event_loop).result()
         dt_node = self.connection.get_node(dt_id)
         dt_node_def = asyncio.run_coroutine_threadsafe(dt_node.read_data_type_definition(), self.event_loop).result()
-        
+
         return [Field.Name if Field.Value == index else logger.error("Enum fields out of order") for index, Field in enumerate(dt_node_def.Fields)]
-        
+
     def subscribe(self, attributes: Union[str, list[str]] = hn_opcua_tilt_sensors, period: int = 100, data_queue: queue.Queue = None) -> int:
         if data_queue is None:
             data_queue = self.subscription_queue
