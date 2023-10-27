@@ -364,9 +364,9 @@ class scu:
     """
     def __init__(self, host: str = 'localhost', port: int = 4840,
                  endpoint: str = '/dish-structure/server/',
-                 namespace: str = 'http://skao.int/DS_ICD/',
+                 namespace: str = 'CETC54',
                  timeout: float = 10.0,
-                 eventloop: asyncio.AbstractEventLoop=None) -> None:
+                 eventloop: asyncio.AbstractEventLoop = None) -> None:
         logger.info('Initialising sculib')
         self.init_called = False
         self.host = host
