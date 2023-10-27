@@ -13,11 +13,17 @@
 ##: 07/10/2021 Added new "save_session14" where file time is no longer added to the file name in this library, but expected to be passed as part of "filename" string argument from calling script.
 # 2023-08-31, Thomas Juerges Refactored the basic access mechanics for an OPC UA server.
 
+import asyncio
+import json
+import logging
+import queue
+import threading
+
 #Import of Python available libraries
 import time
-import json
-import asyncio, threading, asyncua, logging, queue
-from typing import Union, Any
+from typing import Any, Union
+
+import asyncua
 
 logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger('sculib')
@@ -324,7 +330,7 @@ class scu:
     "User does not have permission to perform the requested operation."(BadUserAccessDenied)
     """
     def __init__(self, host: str = 'localhost', port: int = 4840, endpoint: str = '', namespace: str = 'http://skao.int/DS_ICD/', timeout: float = 10.0) -> None:
-        logger.info('Initialising sculib. This will take about 10s...')
+        logger.info('Initialising sculib')
         self.init_called = False
         self.host = host
         self.port = port
@@ -338,6 +344,7 @@ class scu:
         self.subscription_queue = queue.Queue()
         self.create_and_start_asyncio_event_loop()
         self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout)
+        logger.info('Populating nodes dicts from server. This will take about 10s...')
         self.populate_node_dicts()
         self.debug = True
         self.init_called = True
