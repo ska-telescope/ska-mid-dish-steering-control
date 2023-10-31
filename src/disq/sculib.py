@@ -28,7 +28,7 @@ import asyncua
 logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger('sculib')
 # Make the ua client less chatty
-logging.getLogger("asyncua").setLevel(logging.WARNING)
+logging.getLogger("asyncua").setLevel(logging.INFO)
 
 #define some preselected sensors for recording into a logfile
 hn_feed_indexer_sensors=[
@@ -329,7 +329,11 @@ class scu:
     *** Exception caught
     "User does not have permission to perform the requested operation."(BadUserAccessDenied)
     """
-    def __init__(self, host: str = 'localhost', port: int = 4840, endpoint: str = '', namespace: str = 'http://skao.int/DS_ICD/', timeout: float = 10.0) -> None:
+    def __init__(self, host: str = 'localhost', port: int = 4840,
+                 endpoint: str = '/dish-structure/server/', 
+                 namespace: str = 'http://skao.int/DS_ICD/',
+                 timeout: float = 10.0, 
+                 eventloop: asyncio.AbstractEventLoop=None) -> None:
         logger.info('Initialising sculib')
         self.init_called = False
         self.host = host
@@ -337,12 +341,15 @@ class scu:
         self.endpoint = endpoint
         self.namespace = namespace
         self.timeout = timeout
-        self.event_loop = None
         self.event_loop_thread = None
         self.subscription_handler = None
         self.subscriptions = {}
         self.subscription_queue = queue.Queue()
-        self.create_and_start_asyncio_event_loop()
+        if eventloop is None:
+            self.create_and_start_asyncio_event_loop()
+        else:
+            self.event_loop = eventloop
+        logger.info(f"Event loop: {self.event_loop}")
         self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout)
         logger.info('Populating nodes dicts from server. This will take about 10s...')
         self.populate_node_dicts()
@@ -374,6 +381,7 @@ class scu:
 
     def connect(self, host: str, port: int, endpoint: str, timeout: float) -> None:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
+        logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
