@@ -498,8 +498,15 @@ class scu:
         if not isinstance(attributes, list):
             attributes = [attributes,]
         nodes = []
+        invalid_attributes = []
         for attribute in attributes:
-            nodes.append(self.nodes[attribute])
+            if attribute in self.nodes:
+                nodes.append(self.nodes[attribute])
+            else:
+                invalid_attributes.append(attribute)
+        if len(invalid_attributes) > 0:
+            logger.warning(f'The following OPC-UA attributes not found in nodes '
+                           f'dict and not subscribed for event updates: {invalid_attributes}')
         subscription = asyncio.run_coroutine_threadsafe(self.connection.create_subscription(period, subscription_handler), self.event_loop).result()
         handle = asyncio.run_coroutine_threadsafe(subscription.subscribe_data_change(nodes), self.event_loop).result()
         id = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
