@@ -222,9 +222,16 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
     id = f'{node.nodeid.NamespaceIndex}:{asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop).result().Text}'
     def fn(*args) -> Any:
         try:
-            return asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
+            return_code = asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
+            return_msg:str = ""
+            if return_code is not None:
+                return_msg = asyncua.ua.CmdResponseType(return_code).name
         except Exception as e:
+            e.add_note(f'Command: {id} args: {args}')
             asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+            return_code = -1
+            return_msg = str(e)
+        return return_code, return_msg
     return fn
 
 def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
@@ -312,7 +319,7 @@ class scu:
 
     # For instance, command the PLC to slew to a new position:
     az = 182.0; el = 21.8; az_v = 1.2; el_v = 2.1
-    result = scu.commands['Management.Slew2AbsAzEl'](az, el, az_v, el_v)
+    result_code, result_msg = scu.commands['Management.Slew2AbsAzEl'](az, el, az_v, el_v)
 
     # The OPC UA server also provides read-writeable and read-only variables,
     # commonly called in OPC UA "attributes". An attribute's value can easily
