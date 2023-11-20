@@ -13,16 +13,22 @@
 ##: 07/10/2021 Added new "save_session14" where file time is no longer added to the file name in this library, but expected to be passed as part of "filename" string argument from calling script.
 # 2023-08-31, Thomas Juerges Refactored the basic access mechanics for an OPC UA server.
 
+import asyncio
+import json
+import logging
+import queue
+import threading
+
 #Import of Python available libraries
 import time
-import json
-import asyncio, threading, asyncua, logging, queue
-from typing import Union, Any
+from typing import Any, Union
+
+import asyncua
 
 logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger('sculib')
 # Make the ua client less chatty
-logging.getLogger("asyncua").setLevel(logging.WARNING)
+logging.getLogger("asyncua").setLevel(logging.INFO)
 
 #define some preselected sensors for recording into a logfile
 hn_feed_indexer_sensors=[
@@ -216,9 +222,16 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
     id = f'{node.nodeid.NamespaceIndex}:{asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop).result().Text}'
     def fn(*args) -> Any:
         try:
-            return asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
+            return_code = asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
+            return_msg:str = ""
+            if return_code is not None:
+                return_msg = asyncua.ua.CmdResponseType(return_code).name
         except Exception as e:
+            e.add_note(f'Command: {id} args: {args}')
             asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+            return_code = -1
+            return_msg = str(e)
+        return return_code, return_msg
     return fn
 
 def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
@@ -306,7 +319,7 @@ class scu:
 
     # For instance, command the PLC to slew to a new position:
     az = 182.0; el = 21.8; az_v = 1.2; el_v = 2.1
-    result = scu.commands['Management.Slew2AbsAzEl'](az, el, az_v, el_v)
+    result_code, result_msg = scu.commands['Management.Slew2AbsAzEl'](az, el, az_v, el_v)
 
     # The OPC UA server also provides read-writeable and read-only variables,
     # commonly called in OPC UA "attributes". An attribute's value can easily
@@ -323,21 +336,29 @@ class scu:
     *** Exception caught
     "User does not have permission to perform the requested operation."(BadUserAccessDenied)
     """
-    def __init__(self, host: str = 'localhost', port: int = 4840, endpoint: str = '', namespace: str = 'http://skao.int/DS_ICD/', timeout: float = 10.0) -> None:
-        logger.info('Initialising sculib. This will take about 10s...')
+    def __init__(self, host: str = 'localhost', port: int = 4840,
+                 endpoint: str = '/dish-structure/server/', 
+                 namespace: str = 'http://skao.int/DS_ICD/',
+                 timeout: float = 10.0, 
+                 eventloop: asyncio.AbstractEventLoop=None) -> None:
+        logger.info('Initialising sculib')
         self.init_called = False
         self.host = host
         self.port = port
         self.endpoint = endpoint
         self.namespace = namespace
         self.timeout = timeout
-        self.event_loop = None
         self.event_loop_thread = None
         self.subscription_handler = None
         self.subscriptions = {}
         self.subscription_queue = queue.Queue()
-        self.create_and_start_asyncio_event_loop()
+        if eventloop is None:
+            self.create_and_start_asyncio_event_loop()
+        else:
+            self.event_loop = eventloop
+        logger.info(f"Event loop: {self.event_loop}")
         self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout)
+        logger.info('Populating nodes dicts from server. This will take about 10s...')
         self.populate_node_dicts()
         self.debug = True
         self.init_called = True
@@ -367,6 +388,7 @@ class scu:
 
     def connect(self, host: str, port: int, endpoint: str, timeout: float) -> None:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
+        logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
@@ -483,8 +505,15 @@ class scu:
         if not isinstance(attributes, list):
             attributes = [attributes,]
         nodes = []
+        invalid_attributes = []
         for attribute in attributes:
-            nodes.append(self.nodes[attribute])
+            if attribute in self.nodes:
+                nodes.append(self.nodes[attribute])
+            else:
+                invalid_attributes.append(attribute)
+        if len(invalid_attributes) > 0:
+            logger.warning(f'The following OPC-UA attributes not found in nodes '
+                           f'dict and not subscribed for event updates: {invalid_attributes}')
         subscription = asyncio.run_coroutine_threadsafe(self.connection.create_subscription(period, subscription_handler), self.event_loop).result()
         handle = asyncio.run_coroutine_threadsafe(subscription.subscribe_data_change(nodes), self.event_loop).result()
         id = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
