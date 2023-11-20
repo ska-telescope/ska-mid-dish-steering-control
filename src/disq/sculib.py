@@ -271,7 +271,7 @@ class SubscriptionHandler:
         message from an OPC UA server.
         """
         name = self.nodes[node]
-        source_timestamp = data.monitored_item.Value.SourceTimestamp.timestamp()
+        source_timestamp = data.monitored_item.Value.SourceTimestamp
         server_timestamp = data.monitored_item.Value.ServerTimestamp.timestamp()
         value_for_queue = {'name': name, 'node': node, 'value': value, 'source_timestamp': source_timestamp, 'server_timestamp': server_timestamp, 'data': data}
         self.subscription_queue.put(value_for_queue, block = True, timeout = 0.1)
