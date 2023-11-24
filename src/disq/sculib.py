@@ -18,6 +18,7 @@ import json
 import logging
 import queue
 import threading
+import enum
 
 #Import of Python available libraries
 import time
@@ -28,7 +29,7 @@ import asyncua
 logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger('sculib')
 # Make the ua client less chatty
-logging.getLogger("asyncua").setLevel(logging.INFO)
+logging.getLogger("asyncua").setLevel(logging.WARNING)
 
 #define some preselected sensors for recording into a logfile
 hn_feed_indexer_sensors=[
@@ -392,7 +393,7 @@ class scu:
         connection = asyncua.Client(opc_ua_server, timeout)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
-        _ = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
+        self.custom_types = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
         self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
         return connection
 
@@ -498,6 +499,37 @@ class scu:
         logger.info(info)
         return list(self.attributes.keys())
 
+    def get_attribute_data_type(self, attribute: str) -> str:
+        """
+        Get the data type for the given node. Returns "Boolean"/"Double"/"Enumeration",
+        for the respective types or "Unknown" for a not yet known type.
+        """
+        node = self.nodes[attribute]
+        dt_id = asyncio.run_coroutine_threadsafe(node.read_data_type(), self.event_loop).result()
+        dt_node = self.connection.get_node(dt_id)
+        dt_node_info = asyncio.run_coroutine_threadsafe(dt_node.read_browse_name(), self.event_loop).result()
+        dt_name = dt_node_info.Name
+        if dt_name == "Boolean" or dt_name == "Double":
+            return dt_name
+        
+        if dt_name in self.custom_types:
+            if issubclass(self.custom_types[dt_name], enum.Enum):
+                return "Enumeration"
+
+        return "Unknown"
+    
+    def get_enum_strings(self, enum_node: str) -> list[str]:
+        """
+        Get a list of enumeration strings where the index of the list matches the enum value.
+        enum_node MUST be the name of an Enumeration type node (see get_attribute_data_type()).
+        """
+        node = self.nodes[enum_node]
+        dt_id = asyncio.run_coroutine_threadsafe(node.read_data_type(), self.event_loop).result()
+        dt_node = self.connection.get_node(dt_id)
+        dt_node_def = asyncio.run_coroutine_threadsafe(dt_node.read_data_type_definition(), self.event_loop).result()
+        
+        return [Field.Name if Field.Value == index else logger.error("Enum fields out of order") for index, Field in enumerate(dt_node_def.Fields)]
+        
     def subscribe(self, attributes: Union[str, list[str]] = hn_opcua_tilt_sensors, period: int = 100, data_queue: queue.Queue = None) -> int:
         if data_queue is None:
             data_queue = self.subscription_queue
