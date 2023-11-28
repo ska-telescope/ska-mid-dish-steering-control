@@ -657,152 +657,163 @@ class scu:
     #SIMPLE PUTS
 
     #command authority
-    def command_authority(self, action):
+    def command_authority(self, action: bool = None, username: str = ""):
+        if action is None:
+            logger.error('command_authority requires the action to be Get or Release!')
+            return
+        if len(username) <= 0:
+            logger.error('command_authority command requires a user as second parameter!')
+            return
         #1 get #2 release
         logger.info('command authority: ', action)
-        authority={'Get': 1, 'Release': 2}
-        self.scu_put('/devices/command',
-            {'path': 'acu.command_arbiter.authority',
-            'params': {'action': authority[action]}})
+        authority={'Get': True, 'Release': False}
+        return self.commands['CommandArbiter.Commands.TakeReleaseAuth'](authority[action], username)
 
     #commands to DMC state - dish management controller
     def interlock_acknowledge_dmc(self):
-        logger.info('reset dmc')
-        self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.interlock_acknowledge'})
+        logger.info('acknowledge dmc')
+        return self.commands['Safety.Commands.InterlockAck']()
 
-    def reset_dmc(self):
+    def reset_dmc(self, axis: int = None):
         logger.info('reset dmc')
-        self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.reset'})
+        if axis is None:
+            logger.error('reset_dmc requires an exis as parameter! Try one '
+                         'of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
+        return self.commands['Management.Commands.Reset'](axis)
 
-    def activate_dmc(self):
+    def activate_dmc(self, axis: int = None):
         logger.info('activate dmc')
-        self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.activate'})
+        if axis is None:
+            logger.error('activate_dmc requires now an axis as parameter! '
+                         'Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
+            return
+        return self.commands['Management.Commands.Activate'](axis)
 
-    def deactivate_dmc(self):
+    def deactivate_dmc(self, axis: int = None):
         logger.info('deactivate dmc')
-        self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.deactivate'})
+        if axis is None:
+            logger.error('deactivate_dmc requires now an axis as parameter! '
+                         'Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
+            return
+        return self.commands['Management.Commands.DeActivate'](axis)
 
     def move_to_band(self, position):
         bands = {'Band 1': 1, 'Band 2': 2, 'Band 3': 3, 'Band 4': 4, 'Band 5a': 5, 'Band 5b': 6, 'Band 5c': 7}
         logger.info('move to band:', position)
         if not(isinstance(position, str)):
-            self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.move_to_band',
-             'params': {'action': position}})
+            return self.commands['Management.Commands.Move2Band'](position)
         else:
-            self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.move_to_band',
-             'params': {'action': bands[position]}})
+            return self.commands['Management.Commands.Move2Band'](bands[position])
 
-    def abs_azel(self, az_angle, el_angle):
-        logger.info('abs az: {:.4f} el: {:.4f}'.format(az_angle, el_angle))
-        self.scu_put('/devices/command',
-            {'path': 'acu.dish_management_controller.slew_to_abs_pos',
-             'params': {'new_azimuth_absolute_position_set_point': az_angle,
-                   'new_elevation_absolute_position_set_point': el_angle}})
+    def abs_azel(self, az_angle, el_angle, az_velocity: float = None, el_velocity: float = None):
+        if az_velocity is None or el_velocity is None:
+            logger.error('abs_azel requires now the velocities for az and el '
+                         'as third and fourth parameters!')
+            return
+        logger.info(f'abs az: {az_angle:.4f} el: {el_angle:.4f}, az velocity: {az_velocity:.4f}, el velocity: {el_velocity:.4f}')
+        return self.commands['Management.Commands.Slew2AbsAzEl'](az_angle, el_angle, az_veloxity, el_velocity)
 
     #commands to ACU
     def activate_az(self):
-        logger.info('act azimuth')
-        self.scu_put('/devices/command',
-            {'path': 'acu.elevation.activate'})
+        logger.info('activate azimuth')
+        return self.activate_dmc(0)
+
+    def deactivate_az(self):
+        logger.info('deactivate azimuth')
+        return self.deactivate_dmc(0)
 
     def activate_el(self):
         logger.info('activate elevation')
-        self.scu_put('/devices/command',
-            {'path': 'acu.elevation.activate'})
+        return self.activate_dmc(1)
 
     def deactivate_el(self):
         logger.info('deactivate elevation')
-        self.scu_put('/devices/command',
-            {'path': 'acu.elevation.deactivate'})
+        return self.deactivate_dmc(1)
+
+    def activate_fi(self):
+        logger.info('activate feed indexer')
+        return self.activate_dmc(2)
+
+    def deactivate_fi(self):
+        logger.info('deactivate feed indexer')
+        return self.deactivate_dmc(2)
 
     def abs_azimuth(self, az_angle, az_vel):
-        logger.info('abs az: {:.4f} vel: {:.4f}'.format(az_angle, az_vel))
-        self.scu_put('/devices/command',
-            {'path': 'acu.azimuth.slew_to_abs_pos',
-             'params': {'new_axis_absolute_position_set_point': az_angle,
-              'new_axis_speed_set_point_for_this_move': az_vel}})
+        logger.info(f'abs az: {az_angle:.4f} vel: {az_vel:.4f}')
+        return self.commands['Management.Commands.Slew2AbsSingleAx'](0, az_angle, az_vel)
 
     def abs_elevation(self, el_angle, el_vel):
-        logger.info('abs el: {:.4f} vel: {:.4f}'.format(el_angle, el_vel))
-        self.scu_put('/devices/command',
-            {'path': 'acu.elevation.slew_to_abs_pos',
-             'params': {'new_axis_absolute_position_set_point': el_angle,
-              'new_axis_speed_set_point_for_this_move': el_vel}})
+        logger.info(f'abs el: {el_angle:.4f} vel: {el_vel:.4f}')
+        return self.commands['Management.Commands.Slew2AbsSingleAx'](1, el_angle, el_vel)
+
+    def abs_feed_indexer(self, fi_angle, fi_vel):
+        logger.info(f'abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}')
+        return self.commands['Management.Commands.Slew2AbsSingleAx'](2, fi_angle, fi_vel)
 
     def load_static_offset(self, az_offset, el_offset):
-        logger.info('offset az: {:.4f} el: {:.4f}'.format(az_offset, el_offset))
-        self.scu_put('/devices/command',
-            {'path': 'acu.tracking_controller.load_static_tracking_offsets.',
-             'params': {'azimuth_tracking_offset': az_offset,
-                        'elevation_tracking_offset': el_offset}})     #Track table commands
+        logger.info(f'offset az: {az_offset:.4f} el: {el_offset:.4f}')
+        return self.commands['Tracking.Commands.TrackLoadStaticOff'](az_offset, el_offset)
 
-
-
-    def load_program_track(self, load_type, entries, t=[0]*50, az=[0]*50, el=[0]*50):
+    def load_program_track(self, load_type, entries, t=[0]*5000, az=[0]*5000, el=[0]*5000):
         logger.info(load_type)
-        LOAD_TYPES = {
-            'LOAD_NEW' : 1,
-            'LOAD_ADD' : 2,
-            'LOAD_RESET' : 3}
 
+        # unused
+        # LOAD_TYPES = {
+        #     'LOAD_NEW' : 0,
+        #     'LOAD_ADD' : 1,
+        #     'LOAD_RESET' : 2}
+
+        # unused
         #table selector - to tidy for future use
-        ptrackA = 11
+        # ptrackA = 11
+        # TABLE_SELECTOR =  {
+        #     'pTrackA' : 11,
+        #     'pTrackB' : 12,
+        #     'oTrackA' : 21,
+        #     'oTrackB' : 22}
 
-        TABLE_SELECTOR =  {
-            'pTrackA' : 11,
-            'pTrackB' : 12,
-            'oTrackA' : 21,
-            'oTrackB' : 22}
-
+        # unused
         #funny thing is SCU wants 50 entries, even for LOAD RESET! or if you send less then you have to pad the table
+        # if entries != 50:
+        #     padding = 50 - entries
+        #     t  += [0] * padding
+        #     az += [0] * padding
+        #     el += [0] * padding
 
-        if entries != 50:
-            padding = 50 - entries
-            t  += [0] * padding
-            az += [0] * padding
-            el += [0] * padding
+        table = ""
+        for index in range(len(t)):
+            row = f'{index:03d}:{t[index]},{az[index]},{el[index]};\n'
+            table.append(row)
+        logging.debug(f'Track table that will be sent to DS:{table}')
+        byte_string = table.encode()
+        return self.commands['Tracking.Commands.TrackLoadTable'](load_type, entries, byte_string)
 
-        self.scu_put('/devices/command',
-                     {'path': 'acu.dish_management_controller.load_program_track',
-                      'params': {'table_selector': ptrackA,
-                                 'load_mode': LOAD_TYPES[load_type],
-                                 'number_of_transmitted_program_track_table_entries': entries,
-                                 'time_0': t[0], 'time_1': t[1], 'time_2': t[2], 'time_3': t[3], 'time_4': t[4], 'time_5': t[5], 'time_6': t[6], 'time_7': t[7], 'time_8': t[8], 'time_9': t[9], 'time_10': t[10], 'time_11': t[11], 'time_12': t[12], 'time_13': t[13], 'time_14': t[14], 'time_15': t[15], 'time_16': t[16], 'time_17': t[17], 'time_18': t[18], 'time_19': t[19], 'time_20': t[20], 'time_21': t[21], 'time_22': t[22], 'time_23': t[23], 'time_24': t[24], 'time_25': t[25], 'time_26': t[26], 'time_27': t[27], 'time_28': t[28], 'time_29': t[29], 'time_30': t[30], 'time_31': t[31], 'time_32': t[32], 'time_33': t[33], 'time_34': t[34], 'time_35': t[35], 'time_36': t[36], 'time_37': t[37], 'time_38': t[38], 'time_39': t[39], 'time_40': t[40], 'time_41': t[41], 'time_42': t[42], 'time_43': t[43], 'time_44': t[44], 'time_45': t[45], 'time_46': t[46], 'time_47': t[47], 'time_48': t[48], 'time_49': t[49],
-                                 'azimuth_position_0': az[0], 'azimuth_position_1': az[1], 'azimuth_position_2': az[2], 'azimuth_position_3': az[3], 'azimuth_position_4': az[4], 'azimuth_position_5': az[5], 'azimuth_position_6': az[6], 'azimuth_position_7': az[7], 'azimuth_position_8': az[8], 'azimuth_position_9': az[9], 'azimuth_position_10': az[10], 'azimuth_position_11': az[11], 'azimuth_position_12': az[12], 'azimuth_position_13': az[13], 'azimuth_position_14': az[14], 'azimuth_position_15': az[15], 'azimuth_position_16': az[16], 'azimuth_position_17': az[17], 'azimuth_position_18': az[18], 'azimuth_position_19': az[19], 'azimuth_position_20': az[20], 'azimuth_position_21': az[21], 'azimuth_position_22': az[22], 'azimuth_position_23': az[23], 'azimuth_position_24': az[24], 'azimuth_position_25': az[25], 'azimuth_position_26': az[26], 'azimuth_position_27': az[27], 'azimuth_position_28': az[28], 'azimuth_position_29': az[29], 'azimuth_position_30': az[30], 'azimuth_position_31': az[31], 'azimuth_position_32': az[32], 'azimuth_position_33': az[33], 'azimuth_position_34': az[34], 'azimuth_position_35': az[35], 'azimuth_position_36': az[36], 'azimuth_position_37': az[37], 'azimuth_position_38': az[38], 'azimuth_position_39': az[39], 'azimuth_position_40': az[40], 'azimuth_position_41': az[41], 'azimuth_position_42': az[42], 'azimuth_position_43': az[43], 'azimuth_position_44': az[44], 'azimuth_position_45': az[45], 'azimuth_position_46': az[46], 'azimuth_position_47': az[47], 'azimuth_position_48': az[48], 'azimuth_position_49': az[49],
-                                 'elevation_position_0': el[0], 'elevation_position_1': el[1], 'elevation_position_2': el[2], 'elevation_position_3': el[3], 'elevation_position_4': el[4], 'elevation_position_5': el[5], 'elevation_position_6': el[6], 'elevation_position_7': el[7], 'elevation_position_8': el[8], 'elevation_position_9': el[9], 'elevation_position_10': el[10], 'elevation_position_11': el[11], 'elevation_position_12': el[12], 'elevation_position_13': el[13], 'elevation_position_14': el[14], 'elevation_position_15': el[15], 'elevation_position_16': el[16], 'elevation_position_17': el[17], 'elevation_position_18': el[18], 'elevation_position_19': el[19], 'elevation_position_20': el[20], 'elevation_position_21': el[21], 'elevation_position_22': el[22], 'elevation_position_23': el[23], 'elevation_position_24': el[24], 'elevation_position_25': el[25], 'elevation_position_26': el[26], 'elevation_position_27': el[27], 'elevation_position_28': el[28], 'elevation_position_29': el[29], 'elevation_position_30': el[30], 'elevation_position_31': el[31], 'elevation_position_32': el[32], 'elevation_position_33': el[33], 'elevation_position_34': el[34], 'elevation_position_35': el[35], 'elevation_position_36': el[36], 'elevation_position_37': el[37], 'elevation_position_38': el[38], 'elevation_position_39': el[39], 'elevation_position_40': el[40], 'elevation_position_41': el[41], 'elevation_position_42': el[42], 'elevation_position_43': el[43], 'elevation_position_44': el[44], 'elevation_position_45': el[45], 'elevation_position_46': el[46], 'elevation_position_47': el[47], 'elevation_position_48': el[48], 'elevation_position_49': el[49]}})
-
-    def start_program_track(self, start_time):
-        ptrackA = 11
+    def start_program_track(self, start_time, start_restart_or_stop: bool = True):
+        # unused
+        # ptrackA = 11
         #interpol_modes
-        NEWTON = 0
-        SPLINE = 1
+        # NEWTON = 0
+        # SPLINE = 1
         #start_track_modes
-        AZ_EL = 1
-        RA_DEC = 2
-        RA_DEC_SC = 3  #shortcut
-        self.scu_put('/devices/command',
-                     {'path': 'acu.dish_management_controller.start_program_track',
-                      'params' : {'table_selector': ptrackA,
-                                  'start_time_mjd': start_time,
-                                  'interpol_mode': SPLINE,
-                                  'track_mode': AZ_EL }})
+        # AZ_EL = 1
+        # RA_DEC = 2
+        # RA_DEC_SC = 3  #shortcut
+        return self.commands['Tracking.Commands.TrackStart'](1, start_time, start_restart_or_stop)
 
-    def acu_ska_track(self, BODY):
+    def acu_ska_track(self, number_of_entries: int = None, BODY: bytes = None):
         logger.info('acu ska track')
-        self.scu_put('/acuska/programTrack',
-                data = BODY)
+        if number_of_entries is None:
+            logger.error('acu_ska_track requires now as first parameter the '
+                         'number of entries!')
+            return
+        self.commands['Tracking.Commands.TrackLoadTable'](0, number_of_entries, BODY)
 
     def acu_ska_track_stoploadingtable(self):
         logger.info('acu ska track stop loading table')
         self.scu_put('/acuska/stopLoadingTable')
 
-    def format_tt_line(self, t, az,  el, capture_flag = 1, parallactic_angle = 0.0):
+    def format_tt_line(self, t, az,  el, capture_flag: int = 1,
+                       parallactic_angle: float = 0.0):
         '''something will provide a time, az and el as minimum
         time must alread be absolute time desired in mjd format
         assumption is capture flag and parallactic angle will not be used'''
