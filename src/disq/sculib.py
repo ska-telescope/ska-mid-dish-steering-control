@@ -366,7 +366,8 @@ class scu:
                  endpoint: str = '/dish-structure/server/',
                  namespace: str = 'CETC54',
                  timeout: float = 10.0,
-                 eventloop: asyncio.AbstractEventLoop = None) -> None:
+                 eventloop: asyncio.AbstractEventLoop = None,
+                 debug: bool = False) -> None:
         logger.info('Initialising sculib')
         self.init_called = False
         self.host = host
@@ -386,7 +387,7 @@ class scu:
         self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout)
         logger.info('Populating nodes dicts from server. This will take about 10s...')
         self.populate_node_dicts()
-        self.debug = True
+        self.debug = debug
         self.init_called = True
         logger.info('Initialising sculib done.')
 
