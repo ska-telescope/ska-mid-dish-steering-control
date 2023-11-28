@@ -417,7 +417,7 @@ class scu:
         connection = asyncua.Client(opc_ua_server, timeout)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
-        self.custom_types = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
+        _ = asyncio.run_coroutine_threadsafe(connection.load_data_type_definitions(), self.event_loop).result()
         self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
         return connection
 
@@ -536,8 +536,9 @@ class scu:
         if dt_name == "Boolean" or dt_name == "Double":
             return dt_name
         
-        if dt_name in self.custom_types:
-            if issubclass(self.custom_types[dt_name], enum.Enum):
+        # load_data_type_definitions() called in connect() adds new classes to the asyncua.ua module.
+        if dt_name in dir(asyncua.ua):
+            if issubclass(getattr(asyncua.ua, dt_name), enum.Enum):
                 return "Enumeration"
 
         return "Unknown"
