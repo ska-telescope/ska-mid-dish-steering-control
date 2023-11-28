@@ -417,6 +417,8 @@ class scu:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
         logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
+        connection.set_user("LMC")
+        connection.set_password("lmc")
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
         try:
