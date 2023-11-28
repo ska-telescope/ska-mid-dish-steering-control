@@ -608,6 +608,8 @@ class scu:
 
     #Direct SCU webapi functions based on urllib PUT/GET
     def feedback(self, r):
+        logger.error('Not implemented because this function is not needed.')
+        return
         if self.debug == True:
             logger.info('***Feedback:', r.request.url, r.request.body)
             logger.info(r.reason, r.status_code)
@@ -623,6 +625,8 @@ class scu:
 
     #	def scu_get(device, params = {}, r_ip = self.ip, r_port = port):
     def scu_get(self, device, params = {}):
+        logger.error('Not implemented because this function is not needed.')
+        return
         '''This is a generic GET command into http: scu port + folder
         with params=payload'''
         URL = 'http://' + self.ip + ':' + self.port + device
@@ -631,6 +635,8 @@ class scu:
         return(r)
 
     def scu_put(self, device, payload = {}, params = {}, data=''):
+        logger.error('Not implemented because this function is not needed.')
+        return
         '''This is a generic PUT command into http: scu port + folder
         with json=payload'''
         URL = 'http://' + self.ip + ':' + self.port + device
@@ -639,6 +645,8 @@ class scu:
         return(r)
 
     def scu_delete(self, device, payload = {}, params = {}):
+        logger.error('Not implemented because this function is not needed.')
+        return
         '''This is a generic DELETE command into http: scu port + folder
         with params=payload'''
         URL = 'http://' + self.ip + ':' + self.port + device
