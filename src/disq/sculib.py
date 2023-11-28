@@ -806,51 +806,52 @@ class scu:
         '''something will provide a time, az and el as minimum
         time must alread be absolute time desired in mjd format
         assumption is capture flag and parallactic angle will not be used'''
-        f_str='{:.12f} {:.6f} {:.6f} {:.0f} {:.6f} \n'.format(float(t), float(az), float(el), capture_flag, float(parallactic_angle))
-        return(f_str)
+        f_str = f'{t:.12f} {az:.6f} {el:.6f} {capture_flag:.0f} ' \
+            '{parallactic_angle:.6f}\n'
+        return f_str
 
     def format_body(self, t, az, el):
         body = ''
         for i in range(len(t)):
             body += self.format_tt_line(t[i], az[i], el[i])
-        return(body)
+        return body
 
     #status get functions goes here
 
     def status_Value(self, sensor):
-        r=self.scu_get('/devices/statusValue',
+        r = self.scu_get('/devices/statusValue',
               {'path': sensor})
         data = r.json()['value']
         #logger.info('value: ', data)
-        return(data)
+        return data
 
     def status_finalValue(self, sensor):
         #logger.info('get status finalValue: ', sensor)
-        r=self.scu_get('/devices/statusValue',
+        r = self.scu_get('/devices/statusValue',
               {'path': sensor})
         data = r.json()['finalValue']
         #logger.info('finalValue: ', data)
-        return(data)
+        return data
 
     def commandMessageFields(self, commandPath):
-        r=self.scu_get('/devices/commandMessageFields',
+        r = self.scu_get('/devices/commandMessageFields',
               {'path': commandPath})
-        return(r)
+        return r
 
     def statusMessageField(self, statusPath):
-        r=self.scu_get('/devices/statusMessageFields',
+        r = self.scu_get('/devices/statusMessageFields',
               {'deviceName': statusPath})
-        return(r)
+        return r
 
     #ppak added 1/10/2020 as debug for onsite SCU version
     #but only info about sensor, value itself is murky?
     def field(self, sensor):
         #old field method still used on site
-        r=self.scu_get('/devices/field',
+        r = self.scu_get('/devices/field',
               {'path': sensor})
         #data = r.json()['value']
         data = r.json()
-        return(data)
+        return data
 
     #logger functions goes here
 
@@ -863,50 +864,50 @@ class scu:
         create_logger('HN_TILT_TEST', hn_tilt_sensors)
         '''
         logger.info('create logger')
-        r=self.scu_put('/datalogging/config',
+        r = self.scu_put('/datalogging/config',
               {'name': config_name,
                'paths': sensor_list})
-        return(r)
+        return r
 
     '''unusual does not take json but params'''
     def start_logger(self, filename):
         logger.info('start logger: ', filename)
-        r=self.scu_put('/datalogging/start',
+        r = self.scu_put('/datalogging/start',
               params='configName=' + filename)
-        return(r)
+        return r
 
     def stop_logger(self):
         logger.info('stop logger')
-        r=self.scu_put('/datalogging/stop')
-        return(r)
+        r = self.scu_put('/datalogging/stop')
+        return r
 
     def logger_state(self):
 #        logger.info('logger state ')
-        r=self.scu_get('/datalogging/currentState')
+        r = self.scu_get('/datalogging/currentState')
         #logger.info(r.json()['state'])
-        return(r.json()['state'])
+        return r.json()['state']
 
     def logger_configs(self):
         logger.info('logger configs ')
-        r=self.scu_get('/datalogging/configs')
-        return(r)
+        r = self.scu_get('/datalogging/configs')
+        return r
 
     def last_session(self):
         '''
         GET last session
         '''
         logger.info('Last sessions ')
-        r=self.scu_get('/datalogging/lastSession')
+        r = self.scu_get('/datalogging/lastSession')
         session = (r.json()['uuid'])
-        return(session)
+        return session
 
     def logger_sessions(self):
         '''
         GET all sessions
         '''
         logger.info('logger sessions ')
-        r=self.scu_get('/datalogging/sessions')
-        return(r)
+        r = self.scu_get('/datalogging/sessions')
+        return r
 
     def session_query(self, id):
         '''
@@ -915,9 +916,9 @@ class scu:
         session_query('16')
         '''
         logger.info('logger sessioN query id ')
-        r=self.scu_get('/datalogging/session',
+        r = self.scu_get('/datalogging/session',
              {'id': id})
-        return(r)
+        return r
 
     def session_delete(self, id):
         '''
@@ -927,9 +928,9 @@ class scu:
         session_delete('16')
         '''
         logger.info('delete session ')
-        r=self.scu_delete('/datalogging/session',
+        r = self.scu_delete('/datalogging/session',
              params= 'id='+id)
-        return(r)
+        return r
 
     def session_rename(self, id, new_name):
         '''
@@ -940,10 +941,10 @@ class scu:
         session_rename('16','koos')
         '''
         logger.info('rename session ')
-        r=self.scu_put('/datalogging/session',
+        r = self.scu_put('/datalogging/session',
              params = {'id': id,
                 'name' : new_name})
-        return(r)
+        return r
 
 
     def export_session(self, id, interval_ms=1000):
@@ -955,22 +956,22 @@ class scu:
         or export_session('16',1000).text
         '''
         logger.info('export session ')
-        r=self.scu_get('/datalogging/exportSession',
+        r = self.scu_get('/datalogging/exportSession',
              params = {'id': id,
                 'interval_ms' : interval_ms})
-        return(r)
+        return r
 
     #sorted_sessions not working yet
 
     def sorted_sessions(self, isDescending = 'True', startValue = '1', endValue = '25', sortBy = 'Name', filterType='indexSpan'):
         logger.info('sorted sessions')
-        r=self.scu_get('/datalogging/sortedSessions',
+        r = self.scu_get('/datalogging/sortedSessions',
              {'isDescending': isDescending,
               'startValue': startValue,
               'endValue': endValue,
               'filterType': filterType, #STRING - indexSpan|timeSpan,
               'sortBy': sortBy})
-        return(r)
+        return r
 
     #get latest session
     def save_session(self, filename, interval_ms=1000, session = 'last'):
@@ -987,7 +988,7 @@ class scu:
         logger.info('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
         if session == 'last':
             #get all logger sessions, may be many
-            r=self.logger_sessions()
+            r = self.logger_sessions()
             #[-1] for end of list, and ['uuid'] to get id of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
@@ -1015,7 +1016,7 @@ class scu:
         logger.info('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
         if session == 'last':
             #get all logger sessions, may be many
-            r=self.logger_sessions()
+            r = self.logger_sessions()
             #[-1] for end of list, and ['uuid'] to get id of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
@@ -1043,7 +1044,7 @@ class scu:
         logger.info('Attempt export and save of session: {} at rate {:.0f} ms'.format(session, interval_ms))
         if session == 'last':
             #get all logger sessions, may be many
-            r=self.logger_sessions()
+            r = self.logger_sessions()
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
         logger.info('Session id: {} '.format(session))
