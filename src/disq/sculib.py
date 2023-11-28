@@ -16,20 +16,44 @@
 import asyncio
 import json
 import logging
+import logging.config
+import os
 import queue
 import threading
 import enum
 
 #Import of Python available libraries
 import time
+from importlib import resources
 from typing import Any, Union
 
 import asyncua
+import yaml
 
-logging.basicConfig(level = logging.INFO)
 logger = logging.getLogger('sculib')
-# Make the ua client less chatty
-logging.getLogger("asyncua").setLevel(logging.WARNING)
+
+def configure_logging(default_log_level: int = logging.INFO) -> None:
+    if os.path.exists("disq_logging_config.yaml"):
+        disq_log_config_file: resources.Traversable | str = "disq_logging_config.yaml"
+    else:
+        disq_log_config_file = resources.files(__package__) / "default_logging_config.yaml"
+    config = None
+    if os.path.exists(disq_log_config_file):
+        with open(disq_log_config_file, "rt") as f:
+            try:
+                config = yaml.safe_load(f.read())
+            except Exception as e:
+                print(e)
+                print(f"WARNING: Unable to read logging configuration file {disq_log_config_file}")
+    else:
+        print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
+        
+    if config is None:
+        print("Reverting to basic logging config at level:{default_log_level}")
+        logging.basicConfig(level = default_log_level)
+    else:
+        logging.config.dictConfig(config)
+
 
 #define some preselected sensors for recording into a logfile
 hn_feed_indexer_sensors=[
@@ -484,19 +508,19 @@ class scu:
         info = ''
         for key in self.nodes.keys():
             info += f'{key}\n'
-        logger.info(info)
+        logger.debug(info)
         return list(self.nodes.keys())
     def get_command_list(self) -> None:
         info = ''
         for key in self.commands.keys():
             info += f'{key}\n'
-        logger.info(info)
+        logger.debug(info)
         return list(self.commands.keys())
     def get_attribute_list(self) -> None:
         info = ''
         for key in self.attributes.keys():
             info += f'{key}\n'
-        logger.info(info)
+        logger.debug(info)
         return list(self.attributes.keys())
 
     def get_attribute_data_type(self, attribute: str) -> str:
