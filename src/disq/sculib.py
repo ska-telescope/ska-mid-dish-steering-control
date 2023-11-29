@@ -362,7 +362,7 @@ class scu:
     "User does not have permission to perform the requested operation."(BadUserAccessDenied)
     """
     def __init__(self, host: str = 'localhost', port: int = 4840,
-                 endpoint: str = '/dish-structure/server/',
+                 endpoint: str = '/OPCUA/SimpleServer',
                  namespace: str = 'CETC54',
                  timeout: float = 10.0,
                  eventloop: asyncio.AbstractEventLoop = None,
