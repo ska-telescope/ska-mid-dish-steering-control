@@ -696,7 +696,7 @@ class scu:
 
     #command authority
     def command_authority(self, action: bool = None, username: str = ""):
-        if action is None:
+        if action not in authority:
             logger.error('command_authority requires the action to be Get or Release!')
             return
         if len(username) <= 0:
