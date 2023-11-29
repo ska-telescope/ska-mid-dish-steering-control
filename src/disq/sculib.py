@@ -414,11 +414,11 @@ class scu:
 
     def set_up_encryption(self, connection, user: str, pw: str) -> None:
         # this is generated if it does not exist
-        opcua_client_key = Path("certs/key.pem")
+        opcua_client_key = Path(resources.files(__package__) / "certs/key.pem")
          # this is generated if it does not exist
-        opcua_client_cert = Path("certs/cert.der")
+        opcua_client_cert = Path(resources.files(__package__) / "certs/cert.der")
         # get from simulator/PKI/private/SimpleServer_2048.der in tarball
-        opcua_server_cert = Path("certs/SimpleServer_2048.der")
+        opcua_server_cert = Path(resources.files(__package__) / "certs/SimpleServer_2048.der")
         connection.set_user(user)
         connection.set_password(pw)
         from asyncua.crypto.cert_gen import setup_self_signed_certificate
