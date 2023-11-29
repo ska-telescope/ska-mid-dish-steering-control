@@ -412,12 +412,45 @@ class scu:
         self.event_loop_thread = threading.Thread(target = self.run_event_loop, args = (event_loop,), name = f'asyncio event loop for sculib instance {self.__class__.__name__}', daemon = True,)
         self.event_loop_thread.start()
 
+    def set_up_encryption(self, connection, user: str, pw: str) -> None:
+        # this is generated if it does not exist
+        opcua_client_key = Path("certs/key.pem")
+         # this is generated if it does not exist
+        opcua_client_cert = Path("certs/cert.der")
+        # get from simulator/PKI/private/SimpleServer_2048.der in tarball
+        opcua_server_cert = Path("certs/SimpleServer_2048.der")
+        connection.set_user(user)
+        connection.set_password(pw)
+        from asyncua.crypto.cert_gen import setup_self_signed_certificate
+        from asyncua.crypto.security_policies import SecurityPolicyBasic256
+        from asyncua.ua import MessageSecurityMode
+        from cryptography.x509.oid import ExtendedKeyUsageOID
+        client_app_uri = "urn:freeopcua:client"
+        _ = asyncio.run_coroutine_threadsafe(setup_self_signed_certificate(
+            key_file=opcua_client_key,
+            cert_file=opcua_client_cert,
+            app_uri=client_app_uri,
+            host_name="localhost",
+            cert_use=[ExtendedKeyUsageOID.CLIENT_AUTH],
+            subject_attrs={
+                "countryName": "ZA",
+                "stateOrProvinceName": "Western Cape",
+                "localityName": "Cape Town",
+                "organizationName": "SKAO",
+                },
+            ), self.event_loop).result()
+        _ = asyncio.run_coroutine_threadsafe(connection.set_security(
+            SecurityPolicyBasic256,
+            certificate=str(opcua_client_cert),
+            private_key=str(opcua_client_key),
+            server_certificate=str(opcua_server_cert),
+            mode=MessageSecurityMode.Sign), self.event_loop).result()
+
     def connect(self, host: str, port: int, endpoint: str, timeout: float) -> None:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
         logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
-        connection.set_user("LMC")
-        connection.set_password("lmc")
+        self.set_up_encryption(connection, "LMC", "lmc")
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
         try:
