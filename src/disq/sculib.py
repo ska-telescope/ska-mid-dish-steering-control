@@ -871,11 +871,7 @@ class scu:
     #status get functions goes here
 
     def status_Value(self, sensor):
-        r = self.scu_get('/devices/statusValue',
-              {'path': sensor})
-        data = r.json()['value']
-        #logger.info('value: ', data)
-        return data
+        return self.attributes[sensor].value
 
     def status_finalValue(self, sensor):
         logger.error('Not implemented because the function '
@@ -1126,21 +1122,21 @@ class scu:
 
     #wait seconds, wait value, wait finalValue
     def wait_duration(self, seconds):
-        logger.info('  wait for {:.1f}s'.format(seconds), end="")
+        logger.info(f'  wait for {seconds:.1f}s', end="")
         time.sleep(seconds)
         logger.info(' done *')
 
     def wait_value(self, sensor, value):
-        logger.info('wait until sensor: {} == value {}'.format(sensor, value))
-        while status_Value(sensor) != value:
+        logger.info(f'wait until sensor: {sensor} == value {value}')
+        while self.attributes[sensor].value != value:
             time.sleep(1)
-        logger.info(' done *')
+        logger.info(f' {sensor} done *')
 
     def wait_finalValue(self, sensor, value):
-        logger.info('wait until sensor: {} == value {}'.format(sensor, value))
+        logger.info(f'wait until sensor: {sensor} == value {value}')
         while status_finalValue(sensor) != value:
             time.sleep(1)
-        logger.info(' {} done *'.format(value))
+        logger.info(f' {sensor} done *')
 
     #Simplified track table functions
 
