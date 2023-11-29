@@ -462,9 +462,15 @@ class scu:
         try:
             self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
         except ValueError as e:
-            namespaces = asyncio.run_coroutine_threadsafe(connection.get_namespace_array(), self.event_loop).result()
-            logger.error(f'*** Exception caught while trying to access the requested namespace "{self.namespace}" on the OPC UA server. Will NOT continue with the normal operation but list the available namespaces here for future reference:\n{namespaces}')
-            sys.exit(0)
+            namespaces = None
+            try:
+                namespaces = asyncio.run_coroutine_threadsafe(connection.get_namespace_array(), self.event_loop).result()
+            except:
+                pass
+            message = f'*** Exception caught while trying to access the requested namespace "{self.namespace}" on the OPC UA server. Will NOT continue with the normal operation but list the available namespaces here for future reference:\n{namespaces}'
+            logger.error(message)
+            e.add_note(message)
+            raise e
         return connection
 
     def disconnect(self) -> None:
