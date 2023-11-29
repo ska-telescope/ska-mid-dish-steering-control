@@ -715,7 +715,7 @@ class scu:
     def reset_dmc(self, axis: int = None):
         logger.info('reset dmc')
         if axis is None:
-            logger.error('reset_dmc requires an exis as parameter! Try one '
+            logger.error('reset_dmc requires an axis as parameter! Try one '
                          'of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
         return self.commands['Management.Reset'](axis)
 
