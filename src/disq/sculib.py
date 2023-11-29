@@ -705,19 +705,19 @@ class scu:
         #1 get #2 release
         logger.info('command authority: ', action)
         authority={'Get': True, 'Release': False}
-        return self.commands['CommandArbiter.Commands.TakeReleaseAuth'](authority[action], username)
+        return self.commands['CommandArbiter.TakeReleaseAuth'](authority[action], username)
 
     #commands to DMC state - dish management controller
     def interlock_acknowledge_dmc(self):
         logger.info('acknowledge dmc')
-        return self.commands['Safety.Commands.InterlockAck']()
+        return self.commands['Safety.InterlockAck']()
 
     def reset_dmc(self, axis: int = None):
         logger.info('reset dmc')
         if axis is None:
             logger.error('reset_dmc requires an exis as parameter! Try one '
                          'of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
-        return self.commands['Management.Commands.Reset'](axis)
+        return self.commands['Management.Reset'](axis)
 
     def activate_dmc(self, axis: int = None):
         logger.info('activate dmc')
@@ -725,7 +725,7 @@ class scu:
             logger.error('activate_dmc requires now an axis as parameter! '
                          'Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
             return
-        return self.commands['Management.Commands.Activate'](axis)
+        return self.commands['Management.Activate'](axis)
 
     def deactivate_dmc(self, axis: int = None):
         logger.info('deactivate dmc')
@@ -733,15 +733,15 @@ class scu:
             logger.error('deactivate_dmc requires now an axis as parameter! '
                          'Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL')
             return
-        return self.commands['Management.Commands.DeActivate'](axis)
+        return self.commands['Management.DeActivate'](axis)
 
     def move_to_band(self, position):
         bands = {'Band 1': 1, 'Band 2': 2, 'Band 3': 3, 'Band 4': 4, 'Band 5a': 5, 'Band 5b': 6, 'Band 5c': 7}
         logger.info('move to band:', position)
         if not(isinstance(position, str)):
-            return self.commands['Management.Commands.Move2Band'](position)
+            return self.commands['Management.Move2Band'](position)
         else:
-            return self.commands['Management.Commands.Move2Band'](bands[position])
+            return self.commands['Management.Move2Band'](bands[position])
 
     def abs_azel(self, az_angle, el_angle, az_velocity: float = None, el_velocity: float = None):
         if az_velocity is None or el_velocity is None:
@@ -749,7 +749,7 @@ class scu:
                          'as third and fourth parameters!')
             return
         logger.info(f'abs az: {az_angle:.4f} el: {el_angle:.4f}, az velocity: {az_velocity:.4f}, el velocity: {el_velocity:.4f}')
-        return self.commands['Management.Commands.Slew2AbsAzEl'](az_angle, el_angle, az_veloxity, el_velocity)
+        return self.commands['Management.Slew2AbsAzEl'](az_angle, el_angle, az_veloxity, el_velocity)
 
     #commands to ACU
     def activate_az(self):
@@ -778,19 +778,19 @@ class scu:
 
     def abs_azimuth(self, az_angle, az_vel):
         logger.info(f'abs az: {az_angle:.4f} vel: {az_vel:.4f}')
-        return self.commands['Management.Commands.Slew2AbsSingleAx'](0, az_angle, az_vel)
+        return self.commands['Management.Slew2AbsSingleAx'](0, az_angle, az_vel)
 
     def abs_elevation(self, el_angle, el_vel):
         logger.info(f'abs el: {el_angle:.4f} vel: {el_vel:.4f}')
-        return self.commands['Management.Commands.Slew2AbsSingleAx'](1, el_angle, el_vel)
+        return self.commands['Management.Slew2AbsSingleAx'](1, el_angle, el_vel)
 
     def abs_feed_indexer(self, fi_angle, fi_vel):
         logger.info(f'abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}')
-        return self.commands['Management.Commands.Slew2AbsSingleAx'](2, fi_angle, fi_vel)
+        return self.commands['Management.Slew2AbsSingleAx'](2, fi_angle, fi_vel)
 
     def load_static_offset(self, az_offset, el_offset):
         logger.info(f'offset az: {az_offset:.4f} el: {el_offset:.4f}')
-        return self.commands['Tracking.Commands.TrackLoadStaticOff'](az_offset, el_offset)
+        return self.commands['Tracking.TrackLoadStaticOff'](az_offset, el_offset)
 
     def load_program_track(self, load_type, entries, t=[0]*5000, az=[0]*5000, el=[0]*5000):
         logger.info(load_type)
@@ -824,7 +824,7 @@ class scu:
             table.append(row)
         logging.debug(f'Track table that will be sent to DS:{table}')
         byte_string = table.encode()
-        return self.commands['Tracking.Commands.TrackLoadTable'](load_type, entries, byte_string)
+        return self.commands['Tracking.TrackLoadTable'](load_type, entries, byte_string)
 
     def start_program_track(self, start_time, start_restart_or_stop: bool = True):
         # unused
@@ -836,7 +836,7 @@ class scu:
         # AZ_EL = 1
         # RA_DEC = 2
         # RA_DEC_SC = 3  #shortcut
-        return self.commands['Tracking.Commands.TrackStart'](1, start_time, start_restart_or_stop)
+        return self.commands['Tracking.TrackStart'](1, start_time, start_restart_or_stop)
 
     def acu_ska_track(self, number_of_entries: int = None, BODY: bytes = None):
         logger.info('acu ska track')
@@ -844,7 +844,7 @@ class scu:
             logger.error('acu_ska_track requires now as first parameter the '
                          'number of entries!')
             return
-        self.commands['Tracking.Commands.TrackLoadTable'](0, number_of_entries, BODY)
+        self.commands['Tracking.TrackLoadTable'](0, number_of_entries, BODY)
 
     def acu_ska_track_stoploadingtable(self):
         logger.info('acu ska track stop loading table')
