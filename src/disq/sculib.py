@@ -847,8 +847,11 @@ class scu:
         self.commands['Tracking.TrackLoadTable'](0, number_of_entries, BODY)
 
     def acu_ska_track_stoploadingtable(self):
-        logger.info('acu ska track stop loading table')
-        self.scu_put('/acuska/stopLoadingTable')
+        logger.error('Not implemented because the function '
+                     '"stopLoadingTable" is not supported by the OPC UA '
+                     'server.')
+        return
+        # self.scu_put('/acuska/stopLoadingTable')
 
     def format_tt_line(self, t, az,  el, capture_flag: int = 1,
                        parallactic_angle: float = 0.0):
@@ -875,26 +878,41 @@ class scu:
         return data
 
     def status_finalValue(self, sensor):
-        #logger.info('get status finalValue: ', sensor)
-        r = self.scu_get('/devices/statusValue',
-              {'path': sensor})
-        data = r.json()['finalValue']
+        logger.error('Not implemented because the function '
+                     '"finalValue" is not supported by the OPC UA '
+                     'server.')
+        return
+        # return self.status_Value(sensor)
+        # r = self.scu_get('/devices/statusValue',
+        #       {'path': sensor})
+        # data = r.json()['finalValue']
         #logger.info('finalValue: ', data)
-        return data
+        # return data
 
     def commandMessageFields(self, commandPath):
-        r = self.scu_get('/devices/commandMessageFields',
-              {'path': commandPath})
-        return r
+        logger.error('Not implemented because the function '
+                     '"commandMessageFields" is not supported by the OPC UA '
+                     'server.')
+        return
+        # r = self.scu_get('/devices/commandMessageFields',
+        #       {'path': commandPath})
+        # return r
 
     def statusMessageField(self, statusPath):
-        r = self.scu_get('/devices/statusMessageFields',
-              {'deviceName': statusPath})
-        return r
+        logger.error('Not implemented because the function '
+                     '"statusMessageFields" is not supported by the OPC UA '
+                     'server.')
+        return
+        # r = self.scu_get('/devices/statusMessageFields',
+        #       {'deviceName': statusPath})
+        # return r
 
     #ppak added 1/10/2020 as debug for onsite SCU version
     #but only info about sensor, value itself is murky?
     def field(self, sensor):
+        logger.error('Not implemented because the function "field" is not '
+                     'supported by the OPC UA server.')
+        return
         #old field method still used on site
         r = self.scu_get('/devices/field',
               {'path': sensor})
