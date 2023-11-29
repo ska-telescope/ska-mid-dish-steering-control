@@ -573,7 +573,7 @@ class scu:
                            f'dict and not subscribed for event updates: {invalid_attributes}')
         subscription = asyncio.run_coroutine_threadsafe(self.connection.create_subscription(period, subscription_handler), self.event_loop).result()
         handle = asyncio.run_coroutine_threadsafe(subscription.subscribe_data_change(nodes), self.event_loop).result()
-        id = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+        id = time.monotonic_ns()
         self.subscriptions[id] = {'handle': handle, 'nodes': nodes, 'subscription': subscription}
         return id
 
