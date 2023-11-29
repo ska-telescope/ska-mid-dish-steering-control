@@ -383,7 +383,16 @@ class scu:
         else:
             self.event_loop = eventloop
         logger.info(f"Event loop: {self.event_loop}")
-        self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout)
+        try:
+            self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True)
+        except:
+            try:
+                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
+            except Exception as e:
+                e.add_note('Cannot connect to the OPC UA server. Please '
+                             'check the connection parameters that were '
+                             'passed to instantiate the sculib!')
+                raise e
         logger.info('Populating nodes dicts from server. This will take about 10s...')
         self.populate_node_dicts()
         self.debug = debug
@@ -446,11 +455,12 @@ class scu:
             server_certificate=str(opcua_server_cert),
             mode=MessageSecurityMode.Sign), self.event_loop).result()
 
-    def connect(self, host: str, port: int, endpoint: str, timeout: float) -> None:
+    def connect(self, host: str, port: int, endpoint: str, timeout: float, encryption: bool = True) -> None:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
         logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
-        self.set_up_encryption(connection, "LMC", "lmc")
+        if encryption:
+            self.set_up_encryption(connection, "LMC", "lmc")
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
         try:
@@ -467,15 +477,20 @@ class scu:
                 namespaces = asyncio.run_coroutine_threadsafe(connection.get_namespace_array(), self.event_loop).result()
             except:
                 pass
+            try:
+                self.disconnect(connection)
+            except:
+                pass
             message = f'*** Exception caught while trying to access the requested namespace "{self.namespace}" on the OPC UA server. Will NOT continue with the normal operation but list the available namespaces here for future reference:\n{namespaces}'
             logger.error(message)
             e.add_note(message)
             raise e
         return connection
 
-    def disconnect(self) -> None:
-        connection = self.connection
-        self.connection = None
+    def disconnect(self, connection = None) -> None:
+        if connection is None:
+            connection = self.connection
+            self.connection = None
         if connection is not None:
             _ = asyncio.run_coroutine_threadsafe(connection.disconnect(), self.event_loop).result()
 
