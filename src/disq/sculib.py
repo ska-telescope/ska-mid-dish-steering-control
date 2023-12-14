@@ -240,7 +240,8 @@ hn_opcua_tilt_sensors = [
 ]
 
 async def handle_exception(e: Exception) -> None:
-    logger.error(f'*** Exception caught\n{e}')
+    logger.exception(f'*** Exception caught: {e}')
+
 
 def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
     call = asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop).result().call_method
@@ -249,8 +250,11 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
         try:
             return_code = asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
             return_msg:str = ""
-            if return_code is not None:
+            if hasattr(asyncua.ua, 'CmdResponseType') and return_code is not None:
+                # The asyncua library has a CmdResponseType enum ONLY if the opcua server implements the type
                 return_msg = asyncua.ua.CmdResponseType(return_code).name
+            else:
+                return_msg = str(return_code)
         except Exception as e:
             e.add_note(f'Command: {id} args: {args}')
             asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
