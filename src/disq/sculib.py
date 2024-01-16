@@ -30,6 +30,8 @@ import asyncua
 import cryptography
 import yaml
 
+import numpy
+
 logger = logging.getLogger('sculib')
 
 def configure_logging(default_log_level: int = logging.INFO) -> None:
@@ -249,7 +251,7 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
     def fn(*args) -> Any:
         try:
             return_code = asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
-            return_msg:str = ""
+            return_msg: str = ""
             if hasattr(asyncua.ua, 'CmdResponseType') and return_code is not None:
                 # The asyncua library has a CmdResponseType enum ONLY if the opcua server implements the type
                 return_msg = asyncua.ua.CmdResponseType(return_code).name
@@ -680,6 +682,58 @@ class scu:
             values.append(self.subscription_queue.get(block = False, timeout = 0.1))
         return values
 
+    def load_track_table_file(self, file_name: str) -> numpy.array:
+        """Load a track table file that can be uploaded with the
+        load_program_track command function:
+            positions = self.load_track_table_file(
+                os.getenv('HOME')+'/Downloads/radial.csv')
+            await scu.load_program_track(asyncua.uaLoadEnumTypes.New,
+                len(positions),
+                positions[:, 0],
+                positions[:, 1],
+                positions[:, 2])
+
+        Parameter: File name of the track table file including its path.
+        Returns:
+            numpy.array: 3d numpy array that contains [time offset, az position, el position]
+        """
+        try:
+            lines = []
+            # Load the track table file.
+            with open(file_name, 'r', encoding = "utf-8") as f:
+                lines = f.readlines()
+            # Remove the header line because it does not contain a position.
+            lines.pop(0)
+            # Remove a trailing '\n' and split the cleaned line at every ','.
+            cleaned_lines = [ line.rstrip('\n').split(',') for line in lines ]
+            # Return an array that contains the time offsets and positions.
+            return numpy.array(cleaned_lines, dtype=float)
+        except Exception as e:
+            e.add_note(f'Could not load or convert the track table file "{file_name}".')
+            logger.error(f'{e}')
+            raise e
+
+    def track_table_reset_and_upload_from_file(self, file_name: str) -> None:
+        """A convenience function that directly uploads a track table to the
+        dish structure's OPC UA server.
+
+        Args:
+            file_name (str): File name of the track table file including its path.
+        """
+        positions = self.load_track_table_file(file_name)
+        # Reset the currently loaded track table.
+        self.load_program_track(asyncua.ua.LoadEnumType.Reset,
+                                 0,
+                                 [0.0],
+                                 [0.0],
+                                 [0.0])
+        # Submit the new track table.
+        self.load_program_track(asyncua.ua.LoadEnumType.New,
+                                len(positions),
+                                positions[:, 0],
+                                positions[:, 1],
+                                positions[:, 2])
+
     #Direct SCU webapi functions based on urllib PUT/GET
     def feedback(self, r):
         logger.error('Not implemented because this function is not needed.')
@@ -828,8 +882,8 @@ class scu:
         logger.info(f'offset az: {az_offset:.4f} el: {el_offset:.4f}')
         return self.commands['Tracking.TrackLoadStaticOff'](az_offset, el_offset)
 
-    def load_program_track(self, load_type, entries, t=[0]*5000, az=[0]*5000, el=[0]*5000):
-        logger.info(load_type)
+    def load_program_track(self, load_type, entries, t, az, el) -> None:
+        logger.info(f'{load_type}')
 
         # unused
         # LOAD_TYPES = {
@@ -854,13 +908,47 @@ class scu:
         #     az += [0] * padding
         #     el += [0] * padding
 
+        if (entries > 0) and ((entries != len(t)) or (entries != len(az))
+            or (entries != len(el)) or (len(t) != len(az))
+            or (len(az) != len(el)) or (len(az) != len(el))):
+            e = IndexError()
+            e.add_note(f'The provided track table contents are not usable because the contents are not aligned. The given number of track table entries and the size of each of the three arrays (t, az and el) need to match: Specified number of entries = {entries}, number of elements in time offset array = {len(t)}, number of elements in azimuth array = {len(az)}, number of elements in elevation array = {len(el)}.')
+            raise e
+
+        # Format the track table in the new way that preceeds every row with
+        # its row number.
         table = ""
         for index in range(len(t)):
-            row = f'{index:03d}:{t[index]},{az[index]},{el[index]};\n'
-            table.append(row)
+            row = f'{index:03d}:{t[index]},{az[index]},{el[index]};'
+            table += row
         logging.debug(f'Track table that will be sent to DS:{table}')
         byte_string = table.encode()
-        return self.commands['Tracking.TrackLoadTable'](load_type, entries, byte_string)
+        try:
+            return self.commands['Tracking.TrackLoadTable'](
+                load_type,
+                asyncua.ua.UInt16(entries),
+                asyncua.ua.ByteString(byte_string))
+        except Exception as e:
+            e.add_note(f'Tried to upload a track table in the new format but this failed. Will now try to uplad the track table in the old format...')
+            logger.warning(e)
+
+        # If I get here, then the OPC UA server likely did not support the new
+        # format. Try again with the old format.
+        table = ""
+        table = f'{entries:03d}:'
+        for index in range(0, entries):
+            row = f'{t[index]},{az[index]},{el[index]};'
+            table += row
+        logging.debug(f'Track table that will be sent to DS:{table}')
+        byte_string = table.encode()
+        try:
+            return self.commands['Tracking.TrackLoadTable'](
+                load_type,
+                asyncua.ua.UInt16(entries),
+                asyncua.ua.ByteString(byte_string))
+        except Exception as e:
+            e.add_note(f'Uploading of a track table in the old format failed, too. Please check that your track table is correctly formatted, not empty and contains valid entries.')
+            raise e
 
     def start_program_track(self, start_time, start_restart_or_stop: bool = True):
         # unused
