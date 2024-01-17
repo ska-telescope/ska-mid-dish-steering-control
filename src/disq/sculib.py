@@ -52,7 +52,13 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         print("Reverting to basic logging config at level:{default_log_level}")
         logging.basicConfig(level = default_log_level)
     else:
-        logging.config.dictConfig(config)
+        Path("logs").mkdir(parents=True, exist_ok=True)
+        try:
+            logging.config.dictConfig(config)
+        except ValueError as e:
+            print(e)
+            print(f"WARNING: Caught exception. Unable to configure logging from file {disq_log_config_file}. Reverting to basicConfig()")
+            logging.basicConfig(level = default_log_level)
 
 
 #define some preselected sensors for recording into a logfile
