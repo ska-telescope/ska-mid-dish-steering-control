@@ -930,7 +930,7 @@ class scu:
         for index in range(len(t)):
             row = f'{index:03d}:{t[index]},{az[index]},{el[index]};'
             table += row
-        logging.debug(f'Track table that will be sent to DS:{table}')
+        logger.debug(f'Track table that will be sent to DS:{table}')
         byte_string = table.encode()
         try:
             return self.commands['Tracking.TrackLoadTable'](
@@ -948,7 +948,7 @@ class scu:
         for index in range(0, entries):
             row = f'{t[index]},{az[index]},{el[index]};'
             table += row
-        logging.debug(f'Track table that will be sent to DS:{table}')
+        logger.debug(f'Track table that will be sent to DS:{table}')
         byte_string = table.encode()
         try:
             return self.commands['Tracking.TrackLoadTable'](
