@@ -29,6 +29,7 @@ from typing import Any, Union
 import asyncua
 import cryptography
 import yaml
+import datetime
 
 logger = logging.getLogger('sculib')
 
@@ -42,6 +43,8 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         with open(disq_log_config_file, "rt") as f:
             try:
                 config = yaml.safe_load(f.read())
+                atTime = datetime.time.fromisoformat(config['handlers']['file_handler']['atTime'])
+                config['handlers']['file_handler']['atTime'] = atTime
             except Exception as e:
                 print(e)
                 print(f"WARNING: Unable to read logging configuration file {disq_log_config_file}")
