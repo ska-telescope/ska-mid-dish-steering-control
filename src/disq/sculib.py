@@ -57,7 +57,7 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
             logging.config.dictConfig(config)
         except ValueError as e:
             print(e)
-            print(f"WARNING: Caught exception. Unable to configure logging from file {disq_log_config_file}. Reverting to basicConfig()")
+            print(f"WARNING: Caught exception. Unable to configure logging from file {disq_log_config_file}. Reverting to logging to the console (basicConfig).")
             logging.basicConfig(level = default_log_level)
 
 
