@@ -849,7 +849,7 @@ class scu:
                          'as third and fourth parameters!')
             return
         logger.info(f'abs az: {az_angle:.4f} el: {el_angle:.4f}, az velocity: {az_velocity:.4f}, el velocity: {el_velocity:.4f}')
-        return self.commands['Management.Slew2AbsAzEl'](az_angle, el_angle, az_veloxity, el_velocity)
+        return self.commands['Management.Slew2AbsAzEl'](az_angle, el_angle, az_velocity, el_velocity)
 
     #commands to ACU
     def activate_az(self):
