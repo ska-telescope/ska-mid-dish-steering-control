@@ -488,7 +488,11 @@ class scu:
             # where the entry for 3 has no name.
             pass
         try:
-            self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
+            if endpoint != "":
+                self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
+            else:
+                # Force namespace index for first physical controller
+                self.ns_idx = 2
         except ValueError as e:
             namespaces = None
             try:
