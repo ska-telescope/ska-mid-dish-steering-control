@@ -488,7 +488,7 @@ class scu:
             # where the entry for 3 has no name.
             pass
         try:
-            if endpoint != "":
+            if self.namespace != "" and endpoint != "":
                 self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
             else:
                 # Force namespace index for first physical controller
