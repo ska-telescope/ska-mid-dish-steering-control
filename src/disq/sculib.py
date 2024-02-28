@@ -543,8 +543,6 @@ class scu:
         plc_prg = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.ns_idx}:Logic', f'{self.ns_idx}:Application', f'{self.ns_idx}:PLC_PRG']), self.event_loop).result()
         self.plc_prg = plc_prg
         nodes, attributes, commands = self.get_sub_nodes(plc_prg)
-        # Small fix for the key of the top level node 'PLC_PRG'.
-        plc_prg = nodes.pop('')
         nodes.update({'PLC_PRG': plc_prg})
         # Now store the three dicts as members.
         self.nodes = nodes
