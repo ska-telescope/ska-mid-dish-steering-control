@@ -408,7 +408,7 @@ class scu:
                              'check the connection parameters that were '
                              'passed to instantiate the sculib!')
                 raise e
-        logger.info('Populating nodes dicts from server. This will take about 10s...')
+        logger.info('Populating nodes dicts from server. This will take about 1s...')
         self.populate_node_dicts()
         self.debug = debug
         self.init_called = True
@@ -488,7 +488,11 @@ class scu:
             # where the entry for 3 has no name.
             pass
         try:
-            self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
+            if self.namespace != "" and endpoint != "":
+                self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
+            else:
+                # Force namespace index for first physical controller
+                self.ns_idx = 2
         except ValueError as e:
             namespaces = None
             try:
@@ -542,23 +546,25 @@ class scu:
         self.commands = commands
         self.commands_reversed = {v: k for k, v in commands.items()}
 
-    def generate_full_node_name(self, node: asyncua.Node, node_name_separator: str = '.', stop_at_node_name: str = 'PLC_PRG') -> str:
-        nodes = asyncio.run_coroutine_threadsafe(node.get_path(), self.event_loop).result()
-        nodes.reverse()
-        node_name = ''
-        for parent_node in nodes:
-            parent_node_name = f'{asyncio.run_coroutine_threadsafe(parent_node.read_display_name(), self.event_loop).result().Text}'
-            if parent_node_name == stop_at_node_name:
-                break
-            else:
-                node_name = f'{parent_node_name}{node_name_separator}{node_name}'
-        return node_name.strip('.')
+    def generate_full_node_name(self, node: asyncua.Node, parent_names: list[str] | None, node_name_separator: str = '.') -> (str, list[str]):
+        name = asyncio.run_coroutine_threadsafe(node.read_browse_name(), self.event_loop).result().Name
+        ancestors = []
+        if parent_names is not None:
+            for p_name in parent_names:
+                ancestors.append(p_name)
 
-    def get_sub_nodes(self, node: asyncua.Node, node_name_separator: str = '.') -> (dict, dict, dict):
+        if name != "PLC_PRG":
+            ancestors.append(name)
+
+        node_name = node_name_separator.join(ancestors)
+
+        return (node_name, ancestors)
+
+    def get_sub_nodes(self, node: asyncua.Node, node_name_separator: str = '.', parent_names: list[str] | None = None) -> (dict, dict, dict):
         nodes = {}
         attributes = {}
         commands = {}
-        node_name = self.generate_full_node_name(node)
+        node_name, ancestors = self.generate_full_node_name(node, parent_names)
         # Do not add the InputArgument and OutputArgument nodes.
         if node_name.endswith('.InputArguments', node_name.rfind('.')) is True or node_name.endswith('.OutputArguments', node_name.rfind('.')) is True:
             return nodes, attributes, commands
@@ -572,7 +578,7 @@ class scu:
             children = asyncio.run_coroutine_threadsafe(node.get_children(), self.event_loop).result()
             child_nodes = {}
             for child in children:
-                child_nodes, child_attributes, child_commands = self.get_sub_nodes(child)
+                child_nodes, child_attributes, child_commands = self.get_sub_nodes(child, parent_names=ancestors)
                 nodes.update(child_nodes)
                 attributes.update(child_attributes)
                 commands.update(child_commands)
