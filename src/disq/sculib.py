@@ -487,6 +487,14 @@ class scu:
             # The CETC simulator V1 returns a faulty DscCmdAuthorityEnumType,
             # where the entry for 3 has no name.
             pass
+        # Get the namespace index for the PLC's Parameter node
+        try:
+            self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index('http://boschrexroth.com/OpcUa/Parameter/Objects/'), self.event_loop).result()
+        except:
+            self.parameter_ns_idx = None
+            message = f'*** Exception caught while trying to access the namespace "http://boschrexroth.com/OpcUa/Parameter/Objects/" for the parameter nodes on the OPC UA server. From now on it will be assumed that the CETC54 simulator is running.'
+            logger.warning(message)
+
         try:
             if self.namespace != "" and endpoint != "":
                 self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
