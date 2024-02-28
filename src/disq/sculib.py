@@ -399,10 +399,10 @@ class scu:
             self.event_loop = eventloop
         logger.info(f"Event loop: {self.event_loop}")
         try:
-            self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True)
+            self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
         except:
             try:
-                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
+                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True, user = 'lmc', pw = 'lmclmclmc')
             except Exception as e:
                 e.add_note('Cannot connect to the OPC UA server. Please '
                              'check the connection parameters that were '
@@ -473,12 +473,12 @@ class scu:
             server_certificate=str(opcua_server_cert),
             mode=MessageSecurityMode.Sign), self.event_loop).result()
 
-    def connect(self, host: str, port: int, endpoint: str, timeout: float, encryption: bool = True) -> None:
+    def connect(self, host: str, port: int, endpoint: str, timeout: float, encryption: bool = True, user: str = None, pw: str = None) -> None:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
         logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
         if encryption:
-            self.set_up_encryption(connection, "LMC", "lmc")
+            self.set_up_encryption(connection, user, pw)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
         try:
