@@ -602,24 +602,18 @@ class scu:
             commands[node_name] = create_command_function(node, self.event_loop)
         return nodes, attributes, commands
 
-    def get_node_list(self) -> None:
+    def get_node_list(self) -> list[str]:
+        return self.__get_node_list(self.nodes)
+    def get_command_list(self) -> list[str]:
+        return self.__get_node_list(self.commands)
+    def get_attribute_list(self) -> list[str]:
+        return self.__get_node_list(self.attributes)
+    def __get_node_list(self, nodes) -> None:
         info = ''
-        for key in self.nodes.keys():
+        for key in nodes.keys():
             info += f'{key}\n'
         logger.debug(info)
-        return list(self.nodes.keys())
-    def get_command_list(self) -> None:
-        info = ''
-        for key in self.commands.keys():
-            info += f'{key}\n'
-        logger.debug(info)
-        return list(self.commands.keys())
-    def get_attribute_list(self) -> None:
-        info = ''
-        for key in self.attributes.keys():
-            info += f'{key}\n'
-        logger.debug(info)
-        return list(self.attributes.keys())
+        return list(nodes.keys())
 
     def get_attribute_data_type(self, attribute: str|asyncua.ua.uatypes.NodeId) -> str:
         """
