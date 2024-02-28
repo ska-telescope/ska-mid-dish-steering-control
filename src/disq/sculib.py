@@ -551,6 +551,20 @@ class scu:
         self.attributes_reversed = {v: k for k, v in attributes.items()}
         self.commands = commands
         self.commands_reversed = {v: k for k, v in commands.items()}
+        # We also want the PLC's parameters for the drives and the PLC program.
+        # But only if we are not connected to the simulator.
+        if self.parameter_ns_idx is not None:
+            parameter = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.parameter_ns_idx}:Parameter']), self.event_loop).result()
+            # parameter = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.parameter_ns_idx}:Parameter']), self.event_loop).result()
+            self.parameter = parameter
+            parameter_nodes, parameter_attributes, parameter_commands = self.get_sub_nodes(parameter)
+            # Again store the three dicts as members.
+            self.parameter_nodes = parameter_nodes
+            self.parameter_reversed = {v: k for k, v in parameter_nodes.items()}
+            self.parameter_attributes = parameter_attributes
+            self.parameter_attributes_reversed = {v: k for k, v in parameter_attributes.items()}
+            self.parameter_commands = parameter_commands
+            self.parameter_commands_reversed = {v: k for k, v in parameter_commands.items()}
 
     def generate_full_node_name(self, node: asyncua.Node, parent_names: list[str] | None, node_name_separator: str = '.') -> (str, list[str]):
         name = asyncio.run_coroutine_threadsafe(node.read_browse_name(), self.event_loop).result().Name
@@ -608,6 +622,12 @@ class scu:
         return self.__get_node_list(self.commands)
     def get_attribute_list(self) -> list[str]:
         return self.__get_node_list(self.attributes)
+    def get_parameter_node_list(self) -> list[str]:
+        return self.__get_node_list(self.parameter_nodes)
+    def get_parameter_command_list(self) -> list[str]:
+        return self.__get_node_list(self.parameter_commands)
+    def get_parameter_attribute_list(self) -> list[str]:
+        return self.__get_node_list(self.parameter_attributes)
     def __get_node_list(self, nodes) -> None:
         info = ''
         for key in nodes.keys():
