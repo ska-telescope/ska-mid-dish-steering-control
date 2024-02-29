@@ -549,6 +549,11 @@ class scu:
             parameter = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.parameter_ns_idx}:Parameter']), self.event_loop).result()
             self.parameter_nodes, self.parameter_nodes_reversed, self.parameter_attributes, self.parameter_attributes_reversed, self.parameter_commands, self.parameter_commands_reversed = self.generate_node_dicts(parameter, 'Parameter')
             self.parameter = parameter
+        # And now create dicts for all nodes of the OPC UA server. This is
+        # intended to serve as the API for the Dish LMC.
+        server = self.connection.get_root_node()
+        self.server_nodes, self.server_nodes_reversed, self.server_attributes, self.server_attributes_reversed, self.server_commands, self.server_commands_reversed = self.generate_node_dicts(server, 'Root')
+        self.server = server
 
     def generate_node_dicts(self, top_level_node, top_level_node_name: str = None):
         nodes, attributes, commands = self.get_sub_nodes(top_level_node)
@@ -610,16 +615,31 @@ class scu:
 
     def get_node_list(self) -> list[str]:
         return self.__get_node_list(self.nodes)
+
     def get_command_list(self) -> list[str]:
         return self.__get_node_list(self.commands)
+
     def get_attribute_list(self) -> list[str]:
         return self.__get_node_list(self.attributes)
+
     def get_parameter_node_list(self) -> list[str]:
         return self.__get_node_list(self.parameter_nodes)
+
     def get_parameter_command_list(self) -> list[str]:
         return self.__get_node_list(self.parameter_commands)
+
     def get_parameter_attribute_list(self) -> list[str]:
         return self.__get_node_list(self.parameter_attributes)
+
+    def get_server_node_list(self) -> list[str]:
+        return self.__get_node_list(self.server_nodes)
+
+    def get_server_command_list(self) -> list[str]:
+        return self.__get_node_list(self.server_commands)
+
+    def get_server_attribute_list(self) -> list[str]:
+        return self.__get_node_list(self.server_attributes)
+
     def __get_node_list(self, nodes) -> None:
         info = ''
         for key in nodes.keys():
