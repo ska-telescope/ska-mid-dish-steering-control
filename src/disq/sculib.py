@@ -541,30 +541,22 @@ class scu:
         #   from the 'PLC_PRG' node on. The values are callables which
         #   just require the expected parameters.
         plc_prg = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.ns_idx}:Logic', f'{self.ns_idx}:Application', f'{self.ns_idx}:PLC_PRG']), self.event_loop).result()
+        self.nodes, self.nodes_reversed, self.attributes, self.attributes_reversed, self.commands, self.commands_reversed = self.generate_node_dicts(plc_prg, 'PLC_PRG')
         self.plc_prg = plc_prg
-        nodes, attributes, commands = self.get_sub_nodes(plc_prg)
-        nodes.update({'PLC_PRG': plc_prg})
-        # Now store the three dicts as members.
-        self.nodes = nodes
-        self.nodes_reversed = {v: k for k, v in nodes.items()}
-        self.attributes = attributes
-        self.attributes_reversed = {v: k for k, v in attributes.items()}
-        self.commands = commands
-        self.commands_reversed = {v: k for k, v in commands.items()}
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         if self.parameter_ns_idx is not None:
             parameter = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.parameter_ns_idx}:Parameter']), self.event_loop).result()
-            # parameter = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.parameter_ns_idx}:Parameter']), self.event_loop).result()
+            self.parameter_nodes, self.parameter_nodes_reversed, self.parameter_attributes, self.parameter_attributes_reversed, self.parameter_commands, self.parameter_commands_reversed = self.generate_node_dicts(parameter, 'Parameter')
             self.parameter = parameter
-            parameter_nodes, parameter_attributes, parameter_commands = self.get_sub_nodes(parameter)
-            # Again store the three dicts as members.
-            self.parameter_nodes = parameter_nodes
-            self.parameter_reversed = {v: k for k, v in parameter_nodes.items()}
-            self.parameter_attributes = parameter_attributes
-            self.parameter_attributes_reversed = {v: k for k, v in parameter_attributes.items()}
-            self.parameter_commands = parameter_commands
-            self.parameter_commands_reversed = {v: k for k, v in parameter_commands.items()}
+
+    def generate_node_dicts(self, top_level_node, top_level_node_name: str = None):
+        nodes, attributes, commands = self.get_sub_nodes(top_level_node)
+        nodes.update({top_level_node_name: top_level_node})
+        nodes_reversed = {v: k for k, v in nodes.items()}
+        attributes_reversed = {v: k for k, v in attributes.items()}
+        commands_reversed = {v: k for k, v in commands.items()}
+        return nodes, nodes_reversed, attributes, attributes_reversed, commands, commands_reversed
 
     def generate_full_node_name(self, node: asyncua.Node, parent_names: list[str] | None, node_name_separator: str = '.') -> (str, list[str]):
         name = asyncio.run_coroutine_threadsafe(node.read_browse_name(), self.event_loop).result().Name
