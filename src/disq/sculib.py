@@ -20,7 +20,6 @@ import logging
 import logging.config
 import os
 import queue
-import sys
 import threading
 import time
 from importlib import resources
@@ -28,7 +27,6 @@ from pathlib import Path
 from typing import Any, Union
 
 import asyncua
-import cryptography
 import numpy
 import yaml
 
@@ -255,10 +253,10 @@ async def handle_exception(e: Exception) -> None:
 
 def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
     call = asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop).result().call_method
-    id = f'{node.nodeid.NamespaceIndex}:{asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop).result().Text}'
+    uid = f'{node.nodeid.NamespaceIndex}:{asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop).result().Text}'
     def fn(*args) -> Any:
         try:
-            return_code = asyncio.run_coroutine_threadsafe(call(id, *args), event_loop).result()
+            return_code = asyncio.run_coroutine_threadsafe(call(uid, *args), event_loop).result()
             return_msg: str = ""
             if hasattr(asyncua.ua, 'CmdResponseType') and return_code is not None:
                 # The asyncua library has a CmdResponseType enum ONLY if the opcua server implements the type
@@ -266,10 +264,10 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
             else:
                 return_msg = str(return_code)
         except Exception as e:
-            e.add_note(f'Command: {id} args: {args}')
+            # e.add_note(f'Command: {uid} args: {args}')
             asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
             return_code = -1
-            return_msg = str(e)
+            return_msg = f"Command: {uid}, args: {args}, exception: {e}"
         return return_code, return_msg
     return fn
 
@@ -403,9 +401,11 @@ class scu:
             try:
                 self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
             except Exception as e:
-                e.add_note('Cannot connect to the OPC UA server. Please '
-                             'check the connection parameters that were '
-                             'passed to instantiate the sculib!')
+                # e.add_note('Cannot connect to the OPC UA server. Please '
+                msg = 'Cannot connect to the OPC UA server. Please '
+                'check the connection parameters that were '
+                'passed to instantiate the sculib!'
+                logger.error(f"{msg} {e}")
                 raise e
         logger.info('Populating nodes dicts from server. This will take about 1s...')
         self.populate_node_dicts()
@@ -504,7 +504,7 @@ class scu:
                 pass
             message = f'*** Exception caught while trying to access the requested namespace "{self.namespace}" on the OPC UA server. Will NOT continue with the normal operation but list the available namespaces here for future reference:\n{namespaces}'
             logger.error(message)
-            e.add_note(message)
+            # e.add_note(message)
             raise e
         return connection
 
@@ -678,17 +678,17 @@ class scu:
                            f'dict and not subscribed for event updates: {invalid_attributes}')
         subscription = asyncio.run_coroutine_threadsafe(self.connection.create_subscription(period, subscription_handler), self.event_loop).result()
         handle = asyncio.run_coroutine_threadsafe(subscription.subscribe_data_change(nodes), self.event_loop).result()
-        id = time.monotonic_ns()
-        self.subscriptions[id] = {'handle': handle, 'nodes': nodes, 'subscription': subscription}
-        return id
+        uid = time.monotonic_ns()
+        self.subscriptions[uid] = {'handle': handle, 'nodes': nodes, 'subscription': subscription}
+        return uid
 
-    def unsubscribe(self, id: int) -> None:
-        subscription = self.subscriptions.pop(id)
+    def unsubscribe(self, uid: int) -> None:
+        subscription = self.subscriptions.pop(uid)
         _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].delete(), self.event_loop).result()
 
     def unsubscribe_all(self) -> None:
         while len(self.subscriptions) > 0:
-            id, subscription = self.subscriptions.popitem()
+            uid, subscription = self.subscriptions.popitem()
             _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].delete(), self.event_loop).result()
 
     def get_subscription_values(self) -> list[dict]:
@@ -724,8 +724,9 @@ class scu:
             # Return an array that contains the time offsets and positions.
             return numpy.array(cleaned_lines, dtype=float)
         except Exception as e:
-            e.add_note(f'Could not load or convert the track table file "{file_name}".')
-            logger.error(f'{e}')
+            # e.add_note(f'Could not load or convert the track table file "{file_name}".')
+            msg = f'Could not load or convert the track table file "{file_name}".'
+            logger.error(f'{msg} {e}')
             raise e
 
     def track_table_reset_and_upload_from_file(self, file_name: str) -> None:
@@ -927,7 +928,7 @@ class scu:
             or (entries != len(el)) or (len(t) != len(az))
             or (len(az) != len(el)) or (len(az) != len(el))):
             e = IndexError()
-            e.add_note(f'The provided track table contents are not usable because the contents are not aligned. The given number of track table entries and the size of each of the three arrays (t, az and el) need to match: Specified number of entries = {entries}, number of elements in time offset array = {len(t)}, number of elements in azimuth array = {len(az)}, number of elements in elevation array = {len(el)}.')
+            # e.add_note(f'The provided track table contents are not usable because the contents are not aligned. The given number of track table entries and the size of each of the three arrays (t, az and el) need to match: Specified number of entries = {entries}, number of elements in time offset array = {len(t)}, number of elements in azimuth array = {len(az)}, number of elements in elevation array = {len(el)}.')
             raise e
 
         # Format the track table in the new way that preceeds every row with
@@ -944,8 +945,9 @@ class scu:
                 asyncua.ua.UInt16(entries),
                 asyncua.ua.ByteString(byte_string))
         except Exception as e:
-            e.add_note(f'Tried to upload a track table in the new format but this failed. Will now try to uplad the track table in the old format...')
-            logger.warning(e)
+            # e.add_note(f'Tried to upload a track table in the new format but this failed. Will now try to uplad the track table in the old format...')
+            msg = f'Tried to upload a track table in the new format but this failed. Will now try to uplad the track table in the old format...'
+            logger.warning(f"{msg} {e}")
 
         # If I get here, then the OPC UA server likely did not support the new
         # format. Try again with the old format.
@@ -962,7 +964,7 @@ class scu:
                 asyncua.ua.UInt16(entries),
                 asyncua.ua.ByteString(byte_string))
         except Exception as e:
-            e.add_note(f'Uploading of a track table in the old format failed, too. Please check that your track table is correctly formatted, not empty and contains valid entries.')
+            # e.add_note(f'Uploading of a track table in the old format failed, too. Please check that your track table is correctly formatted, not empty and contains valid entries.')
             raise e
 
     def start_program_track(self, start_time, start_restart_or_stop: bool = True):
@@ -1111,32 +1113,32 @@ class scu:
         r = self.scu_get('/datalogging/sessions')
         return r
 
-    def session_query(self, id):
+    def session_query(self, uid):
         '''
-        GET specific session only - specified by id number
+        GET specific session only - specified by uid number
         Usage:
         session_query('16')
         '''
-        logger.info('logger sessioN query id ')
+        logger.info('logger sessioN query uid ')
         r = self.scu_get('/datalogging/session',
-             {'id': id})
+             {'uid': uid})
         return r
 
-    def session_delete(self, id):
+    def session_delete(self, uid):
         '''
-        DELETE specific session only - specified by id number
+        DELETE specific session only - specified by uid number
         Not working - returns response 500
         Usage:
         session_delete('16')
         '''
         logger.info('delete session ')
         r = self.scu_delete('/datalogging/session',
-             params= 'id='+id)
+             params= 'uid='+uid)
         return r
 
-    def session_rename(self, id, new_name):
+    def session_rename(self, uid, new_name):
         '''
-        RENAME specific session only - specified by id number and new session name
+        RENAME specific session only - specified by uid number and new session name
         Not working
         Works in browser display only, reverts when browser refreshed!
         Usage:
@@ -1144,14 +1146,14 @@ class scu:
         '''
         logger.info('rename session ')
         r = self.scu_put('/datalogging/session',
-             params = {'id': id,
+             params = {'uid': uid,
                 'name' : new_name})
         return r
 
 
-    def export_session(self, id, interval_ms=1000):
+    def export_session(self, uid, interval_ms=1000):
         '''
-        EXPORT specific session - by id and with interval
+        EXPORT specific session - by uid and with interval
         output r.text could be directed to be saved to file
         Usage:
         export_session('16',1000)
@@ -1159,7 +1161,7 @@ class scu:
         '''
         logger.info('export session ')
         r = self.scu_get('/datalogging/exportSession',
-             params = {'id': id,
+             params = {'uid': uid,
                 'interval_ms' : interval_ms})
         return r
 
@@ -1191,10 +1193,10 @@ class scu:
         if session == 'last':
             #get all logger sessions, may be many
             r = self.logger_sessions()
-            #[-1] for end of list, and ['uuid'] to get id of last session in list
+            #[-1] for end of list, and ['uuid'] to get uid of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        logger.info('Session id: {} '.format(session))
+        logger.info('Session uid: {} '.format(session))
         file_time = str(int(time.time()))
         file_name = str(filename + '_' + file_time + '.csv')
         file_path = Path.cwd()  / 'output' / file_name
@@ -1219,10 +1221,10 @@ class scu:
         if session == 'last':
             #get all logger sessions, may be many
             r = self.logger_sessions()
-            #[-1] for end of list, and ['uuid'] to get id of last session in list
+            #[-1] for end of list, and ['uuid'] to get uid of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        logger.info('Session id: {} '.format(session))
+        logger.info('Session uid: {} '.format(session))
 ##        file_time = str(int(time.time()))
         file_time = str(int(start))
         file_name = str(filename + '_' + file_time + '.csv')
@@ -1249,7 +1251,7 @@ class scu:
             r = self.logger_sessions()
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        logger.info('Session id: {} '.format(session))
+        logger.info('Session uid: {} '.format(session))
         file_name = str(filename + '.csv')
         file_path = Path.cwd()  / 'output' / file_name
         logger.info('Log file location:', file_path)
