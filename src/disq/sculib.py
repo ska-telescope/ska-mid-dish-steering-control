@@ -14,6 +14,7 @@
 # 2023-08-31, Thomas Juerges Refactored the basic access mechanics for an OPC UA server.
 
 import asyncio
+import datetime
 import enum
 import logging
 import logging.config
@@ -28,10 +29,8 @@ from typing import Any, Union
 
 import asyncua
 import cryptography
-import yaml
-import datetime
-
 import numpy
+import yaml
 
 logger = logging.getLogger('sculib')
 
@@ -685,12 +684,12 @@ class scu:
 
     def unsubscribe(self, id: int) -> None:
         subscription = self.subscriptions.pop(id)
-        _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].unsubscribe(subscription['handle']), self.event_loop).result()
+        _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].delete(), self.event_loop).result()
 
     def unsubscribe_all(self) -> None:
         while len(self.subscriptions) > 0:
             id, subscription = self.subscriptions.popitem()
-            _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].unsubscribe(subscription['handle']), self.event_loop).result()
+            _ = asyncio.run_coroutine_threadsafe(subscription['subscription'].delete(), self.event_loop).result()
 
     def get_subscription_values(self) -> list[dict]:
         values = []
