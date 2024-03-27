@@ -928,7 +928,8 @@ class scu:
             or (entries != len(el)) or (len(t) != len(az))
             or (len(az) != len(el)) or (len(az) != len(el))):
             e = IndexError()
-            # e.add_note(f'The provided track table contents are not usable because the contents are not aligned. The given number of track table entries and the size of each of the three arrays (t, az and el) need to match: Specified number of entries = {entries}, number of elements in time offset array = {len(t)}, number of elements in azimuth array = {len(az)}, number of elements in elevation array = {len(el)}.')
+            msg = f'The provided track table contents are not usable because the contents are not aligned. The given number of track table entries and the size of each of the three arrays (t, az and el) need to match: Specified number of entries = {entries}, number of elements in time offset array = {len(t)}, number of elements in azimuth array = {len(az)}, number of elements in elevation array = {len(el)}.'
+            logger.error(f'{msg} {e}')
             raise e
 
         # Format the track table in the new way that preceeds every row with
@@ -964,7 +965,8 @@ class scu:
                 asyncua.ua.UInt16(entries),
                 asyncua.ua.ByteString(byte_string))
         except Exception as e:
-            # e.add_note(f'Uploading of a track table in the old format failed, too. Please check that your track table is correctly formatted, not empty and contains valid entries.')
+            msg = f'Uploading of a track table in the old format failed, too. Please check that your track table is correctly formatted, not empty and contains valid entries.'
+            logger.error(f'{msg} {e}')
             raise e
 
     def start_program_track(self, start_time, start_restart_or_stop: bool = True):
