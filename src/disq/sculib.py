@@ -396,10 +396,10 @@ class scu:
             self.event_loop = eventloop
         logger.info(f"Event loop: {self.event_loop}")
         try:
-            self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True)
+            self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
         except:
             try:
-                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
+                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True, user = 'lmc', pw = 'lmclmclmc')
             except Exception as e:
                 # e.add_note('Cannot connect to the OPC UA server. Please '
                 msg = 'Cannot connect to the OPC UA server. Please '
@@ -472,12 +472,12 @@ class scu:
             server_certificate=str(opcua_server_cert),
             mode=MessageSecurityMode.Sign), self.event_loop).result()
 
-    def connect(self, host: str, port: int, endpoint: str, timeout: float, encryption: bool = True) -> None:
+    def connect(self, host: str, port: int, endpoint: str, timeout: float, encryption: bool = True, user: str = None, pw: str = None) -> None:
         opc_ua_server = f'opc.tcp://{host}:{port}{endpoint}'
         logger.info(f"Connecting to: {opc_ua_server}")
         connection = asyncua.Client(opc_ua_server, timeout)
         if encryption:
-            self.set_up_encryption(connection, "LMC", "lmc")
+            self.set_up_encryption(connection, user, pw)
         _ = asyncio.run_coroutine_threadsafe(connection.connect(), self.event_loop).result()
         self.opc_ua_server = opc_ua_server
         try:
@@ -486,6 +486,14 @@ class scu:
             # The CETC simulator V1 returns a faulty DscCmdAuthorityEnumType,
             # where the entry for 3 has no name.
             pass
+        # Get the namespace index for the PLC's Parameter node
+        try:
+            self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index('http://boschrexroth.com/OpcUa/Parameter/Objects/'), self.event_loop).result()
+        except:
+            self.parameter_ns_idx = None
+            message = f'*** Exception caught while trying to access the namespace "http://boschrexroth.com/OpcUa/Parameter/Objects/" for the parameter nodes on the OPC UA server. From now on it will be assumed that the CETC54 simulator is running.'
+            logger.warning(message)
+
         try:
             if self.namespace != "" and endpoint != "":
                 self.ns_idx = asyncio.run_coroutine_threadsafe(connection.get_namespace_index(self.namespace), self.event_loop).result()
@@ -532,18 +540,27 @@ class scu:
         #   from the 'PLC_PRG' node on. The values are callables which
         #   just require the expected parameters.
         plc_prg = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.ns_idx}:Logic', f'{self.ns_idx}:Application', f'{self.ns_idx}:PLC_PRG']), self.event_loop).result()
+        self.nodes, self.nodes_reversed, self.attributes, self.attributes_reversed, self.commands, self.commands_reversed = self.generate_node_dicts(plc_prg, 'PLC_PRG')
         self.plc_prg = plc_prg
-        nodes, attributes, commands = self.get_sub_nodes(plc_prg)
-        # Small fix for the key of the top level node 'PLC_PRG'.
-        plc_prg = nodes.pop('')
-        nodes.update({'PLC_PRG': plc_prg})
-        # Now store the three dicts as members.
-        self.nodes = nodes
-        self.nodes_reversed = {v: k for k, v in nodes.items()}
-        self.attributes = attributes
-        self.attributes_reversed = {v: k for k, v in attributes.items()}
-        self.commands = commands
-        self.commands_reversed = {v: k for k, v in commands.items()}
+        # We also want the PLC's parameters for the drives and the PLC program.
+        # But only if we are not connected to the simulator.
+        if self.parameter_ns_idx is not None:
+            parameter = asyncio.run_coroutine_threadsafe(self.connection.nodes.objects.get_child([f'{self.parameter_ns_idx}:Parameter']), self.event_loop).result()
+            self.parameter_nodes, self.parameter_nodes_reversed, self.parameter_attributes, self.parameter_attributes_reversed, self.parameter_commands, self.parameter_commands_reversed = self.generate_node_dicts(parameter, 'Parameter')
+            self.parameter = parameter
+        # And now create dicts for all nodes of the OPC UA server. This is
+        # intended to serve as the API for the Dish LMC.
+        server = self.connection.get_root_node()
+        self.server_nodes, self.server_nodes_reversed, self.server_attributes, self.server_attributes_reversed, self.server_commands, self.server_commands_reversed = self.generate_node_dicts(server, 'Root')
+        self.server = server
+
+    def generate_node_dicts(self, top_level_node, top_level_node_name: str = None):
+        nodes, attributes, commands = self.get_sub_nodes(top_level_node)
+        nodes.update({top_level_node_name: top_level_node})
+        nodes_reversed = {v: k for k, v in nodes.items()}
+        attributes_reversed = {v: k for k, v in attributes.items()}
+        commands_reversed = {v: k for k, v in commands.items()}
+        return nodes, nodes_reversed, attributes, attributes_reversed, commands, commands_reversed
 
     def generate_full_node_name(self, node: asyncua.Node, parent_names: list[str] | None, node_name_separator: str = '.') -> (str, list[str]):
         name = asyncio.run_coroutine_threadsafe(node.read_browse_name(), self.event_loop).result().Name
@@ -595,24 +612,39 @@ class scu:
             commands[node_name] = create_command_function(node, self.event_loop)
         return nodes, attributes, commands
 
-    def get_node_list(self) -> None:
+    def get_node_list(self) -> list[str]:
+        return self.__get_node_list(self.nodes)
+
+    def get_command_list(self) -> list[str]:
+        return self.__get_node_list(self.commands)
+
+    def get_attribute_list(self) -> list[str]:
+        return self.__get_node_list(self.attributes)
+
+    def get_parameter_node_list(self) -> list[str]:
+        return self.__get_node_list(self.parameter_nodes)
+
+    def get_parameter_command_list(self) -> list[str]:
+        return self.__get_node_list(self.parameter_commands)
+
+    def get_parameter_attribute_list(self) -> list[str]:
+        return self.__get_node_list(self.parameter_attributes)
+
+    def get_server_node_list(self) -> list[str]:
+        return self.__get_node_list(self.server_nodes)
+
+    def get_server_command_list(self) -> list[str]:
+        return self.__get_node_list(self.server_commands)
+
+    def get_server_attribute_list(self) -> list[str]:
+        return self.__get_node_list(self.server_attributes)
+
+    def __get_node_list(self, nodes) -> None:
         info = ''
-        for key in self.nodes.keys():
+        for key in nodes.keys():
             info += f'{key}\n'
         logger.debug(info)
-        return list(self.nodes.keys())
-    def get_command_list(self) -> None:
-        info = ''
-        for key in self.commands.keys():
-            info += f'{key}\n'
-        logger.debug(info)
-        return list(self.commands.keys())
-    def get_attribute_list(self) -> None:
-        info = ''
-        for key in self.attributes.keys():
-            info += f'{key}\n'
-        logger.debug(info)
-        return list(self.attributes.keys())
+        return list(nodes.keys())
 
     def get_attribute_data_type(self, attribute: str|asyncua.ua.uatypes.NodeId) -> str:
         """
