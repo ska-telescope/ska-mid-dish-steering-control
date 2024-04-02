@@ -402,9 +402,9 @@ class scu:
                 self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True, user = 'lmc', pw = 'lmclmclmc')
             except Exception as e:
                 # e.add_note('Cannot connect to the OPC UA server. Please '
-                msg = 'Cannot connect to the OPC UA server. Please '
+                msg = ('Cannot connect to the OPC UA server. Please '
                 'check the connection parameters that were '
-                'passed to instantiate the sculib!'
+                'passed to instantiate the sculib!')
                 logger.error(f"{msg} {e}")
                 raise e
         logger.info('Populating nodes dicts from server. This will take about 1s...')
