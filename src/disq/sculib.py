@@ -376,8 +376,9 @@ class scu:
     def __init__(self, host: str = 'localhost', port: int = 4840,
                  endpoint: str = '/OPCUA/SimpleServer',
                  namespace: str = 'CETC54',
+                 username: str|None = None, password: str|None = None,
                  timeout: float = 10.0,
-                 eventloop: asyncio.AbstractEventLoop = None,
+                 eventloop: asyncio.AbstractEventLoop|None = None,
                  debug: bool = False) -> None:
         logger.info('Initialising sculib')
         self.init_called = False
@@ -399,7 +400,12 @@ class scu:
             self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = False)
         except:
             try:
-                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True, user = 'lmc', pw = 'lmclmclmc')
+                user = "lmc"; pw = "lmclmclmc"  # TODO: why these user/pw? These appear to NOT be default ones for the CETC54 simulator...
+                if username is not None:
+                    user = username
+                if password is not None:
+                    pw = password
+                self.connection = self.connect(self.host, self.port, self.endpoint, self.timeout, encryption = True, user = user, pw = pw)
             except Exception as e:
                 # e.add_note('Cannot connect to the OPC UA server. Please '
                 msg = ('Cannot connect to the OPC UA server. Please '
