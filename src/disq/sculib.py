@@ -411,7 +411,7 @@ class scu:
                 msg = ('Cannot connect to the OPC UA server. Please '
                 'check the connection parameters that were '
                 'passed to instantiate the sculib!')
-                logger.error(f"{msg} {e}")
+                logger.error("%s - %s", msg, e)
                 raise e
         logger.info('Populating nodes dicts from server. This will take about 1s...')
         self.populate_node_dicts()
@@ -712,8 +712,7 @@ class scu:
             else:
                 invalid_attributes.append(attribute)
         if len(invalid_attributes) > 0:
-            logger.warning(f'The following OPC-UA attributes not found in nodes '
-                           f'dict and not subscribed for event updates: {invalid_attributes}')
+            logger.warning('The following OPC-UA attributes not found in nodes dict and not subscribed for event updates: %s', invalid_attributes)
         subscription = asyncio.run_coroutine_threadsafe(self.connection.create_subscription(period, subscription_handler), self.event_loop).result()
         handle = asyncio.run_coroutine_threadsafe(subscription.subscribe_data_change(nodes), self.event_loop).result()
         uid = time.monotonic_ns()
@@ -986,7 +985,7 @@ class scu:
         except Exception as e:
             # e.add_note(f'Tried to upload a track table in the new format but this failed. Will now try to uplad the track table in the old format...')
             msg = f'Tried to upload a track table in the new format but this failed. Will now try to uplad the track table in the old format...'
-            logger.warning(f"{msg} {e}")
+            logger.warning("%s - %s", msg, e)
 
         # If I get here, then the OPC UA server likely did not support the new
         # format. Try again with the old format.
