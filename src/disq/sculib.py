@@ -58,10 +58,10 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         with open(disq_log_config_file, "rt") as f:
             try:
                 config = yaml.safe_load(f.read())
-                atTime = datetime.time.fromisoformat(
+                at_time = datetime.time.fromisoformat(
                     config["handlers"]["file_handler"]["atTime"]
                 )
-                config["handlers"]["file_handler"]["atTime"] = atTime
+                config["handlers"]["file_handler"]["atTime"] = at_time
             except Exception as e:
                 print(e)
                 print(
@@ -360,7 +360,7 @@ def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     :raises Exception: If an exception occurs during getting or setting the value.
     """
 
-    class opc_ua_rw_attribute:
+    class opc_ua_rw_attribute:  # noqa: N801
         @property
         def value(self) -> Any:
             try:
@@ -395,7 +395,7 @@ def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     :raises Exception: If an error occurs while getting the value from the OPC UA Node.
     """
 
-    class opc_ua_ro_attribute:
+    class opc_ua_ro_attribute:  # noqa: N801
         @property
         def value(self) -> Any:
             try:
@@ -453,8 +453,10 @@ class SubscriptionHandler:
         self.subscription_queue.put(value_for_queue, block=True, timeout=0.1)
 
 
-class scu:
+class SCU:
     """
+    System Control Unit.
+
     Small library that eases the pain when connecting to an OPC UA server and calling
     methods on it, reading or writing attributes.
 
@@ -463,10 +465,10 @@ class scu:
     ```
     import sculib
     ```
-    - Instantiate an scu object. I provide here the defaults which can be overwritten by
+    - Instantiate an SCU object. I provide here the defaults which can be overwritten by
       specifying the named parameter:
     ```
-    scu = sculib.scu(host = 'localhost', port = 4840, endpoint = '',
+    scu = sculib.SCU(host = 'localhost', port = 4840, endpoint = '',
       namespace = 'http://skao.int/DS_ICD/', timeout = 10.0)
     ```
     - Done.
@@ -514,7 +516,7 @@ class scu:
     "User does not have permission to perform the requested operation."
     (BadUserAccessDenied)
     ```
-    """
+    """  # noqa: RST201,RST203,RST214,RST301
 
     def __init__(
         self,
@@ -571,7 +573,7 @@ class scu:
             self.connection = self.connect(
                 self.host, self.port, self.endpoint, self.timeout, encryption=False
             )
-        except:
+        except Exception:
             try:
                 # TODO: why these user/pw?
                 # These appear to NOT be default ones for the CETC54 simulator...
@@ -757,7 +759,7 @@ class scu:
             _ = asyncio.run_coroutine_threadsafe(
                 connection.load_data_type_definitions(), self.event_loop
             ).result()
-        except:
+        except Exception:
             # The CETC simulator V1 returns a faulty DscCmdAuthorityEnumType,
             # where the entry for 3 has no name.
             pass
@@ -769,7 +771,7 @@ class scu:
                 ),
                 self.event_loop,
             ).result()
-        except:
+        except Exception:
             self.parameter_ns_idx = None
             message = (
                 "*** Exception caught while trying to access the namespace "
@@ -793,11 +795,11 @@ class scu:
                 namespaces = asyncio.run_coroutine_threadsafe(
                     connection.get_namespace_array(), self.event_loop
                 ).result()
-            except:
+            except Exception:
                 pass
             try:
                 self.disconnect(connection)
-            except:
+            except Exception:
                 pass
             message = (
                 "*** Exception caught while trying to access the requested "
@@ -907,6 +909,24 @@ class scu:
         """
         Generate dicts for nodes, attributes, and commands for a given top-level node.
 
+        This function is part of a class and takes the top-level node and an optional
+        name for it as input. It then generates dictionaries for nodes, attributes, and
+        commands based on the structure of the top-level node and returns a tuple
+        containing these dictionaries.
+
+        The dictionaries contain mappings of keys to values and values to keys for
+        nodes, attributes, and commands.
+
+        Example:
+            nodes = {'node1': {'attribute1': 'value1'}, 'node2':
+            {'attribute2': 'value2'}}
+            nodes_reversed = {'{'attribute1': 'value1'}: 'node1',
+            {'attribute2': 'value2'}: 'node2'}
+            attributes = {'attribute1': 'value1', 'attribute2': 'value2'}
+            attributes_reversed = {'value1': 'attribute1', 'value2': 'attribute2'}
+            commands = {'command1': 'node1', 'command2': 'node2'}
+            commands_reversed = {'node1': 'command1', 'node2': 'command2'}
+
         :param top_level_node: The top-level node for which to generate dictionaries.
         :type top_level_node: Any
 
@@ -916,24 +936,6 @@ class scu:
         :return: A tuple containing dictionaries for nodes, nodes_reversed, attributes,
             attributes_reversed, commands, and commands_reversed.
         :rtype: tuple
-
-        The dictionaries contain mappings of keys to values and values to keys for
-        nodes, attributes, and commands.
-
-        Example:
-            nodes = {'node1': {'attribute1': 'value1'}, 'node2':
-                {'attribute2': 'value2'}}
-            nodes_reversed = {'{'attribute1': 'value1'}: 'node1',
-                {'attribute2': 'value2'}: 'node2'}
-            attributes = {'attribute1': 'value1', 'attribute2': 'value2'}
-            attributes_reversed = {'value1': 'attribute1', 'value2': 'attribute2'}
-            commands = {'command1': 'node1', 'command2': 'node2'}
-            commands_reversed = {'node1': 'command1', 'node2': 'command2'}
-
-        This function is part of a class and takes the top-level node and an optional
-        name for it as input. It then generates dictionaries for nodes, attributes, and
-        commands based on the structure of the top-level node and returns a tuple
-        containing these dictionaries.
         """
         nodes, attributes, commands = self.get_sub_nodes(top_level_node)
         nodes.update({top_level_node_name: top_level_node})
@@ -954,7 +956,7 @@ class scu:
         node: asyncua.Node,
         parent_names: list[str] | None,
         node_name_separator: str = ".",
-    ) -> (str, list[str]):
+    ) -> tuple[str, list[str]]:
         """
         Generate the full name of a node by combining its name with its parent names.
 
@@ -1245,11 +1247,11 @@ class scu:
 
         return [
             (
-                Field.Name
-                if Field.Value == index
-                else self._enum_fields_out_of_order(index, Field, dt_node)
+                field.Name
+                if field.Value == index
+                else self._enum_fields_out_of_order(index, field, dt_node)
             )
-            for index, Field in enumerate(dt_node_def.Fields)
+            for index, field in enumerate(dt_node_def.Fields)
         ]
 
     def subscribe(
@@ -1342,15 +1344,15 @@ class scu:
 
     def load_track_table_file(self, file_name: str) -> numpy.array:
         """
-        Load a track table file that can be uploaded with the
-        load_program_track command function:
-            positions = self.load_track_table_file(
-                os.getenv('HOME')+'/Downloads/radial.csv')
-            await scu.load_program_track(asyncua.uaLoadEnumTypes.New,
-                len(positions),
-                positions[:, 0],
-                positions[:, 1],
-                positions[:, 2])
+        Load a track table file to upload with the load_program_track command.
+
+        - positions = self.load_track_table_file(
+            os.getenv('HOME')+'/Downloads/radial.csv')
+        - await scu.load_program_track(asyncua.uaLoadEnumTypes.New,
+            len(positions),
+            positions[:, 0],
+            positions[:, 1],
+            positions[:, 2])
 
         :param str file_name: File name of the track table file including its path.
         :return: 3d numpy array that contains [time offset, az position, el position]
@@ -1375,8 +1377,7 @@ class scu:
 
     def track_table_reset_and_upload_from_file(self, file_name: str) -> None:
         """
-        A convenience function that directly uploads a track table to the dish
-        structure's OPC UA server.
+        Direct upload a track table to the dish structure's OPC UA server.
 
         :param file_name: File name of the track table file including its path.
         :type file_name: str
@@ -1406,18 +1407,18 @@ class scu:
         """
         logger.error("Not implemented because this function is not needed.")
         return
-        if self.debug == True:
-            logger.info("***Feedback:", r.request.url, r.request.body)
-            logger.info(r.reason, r.status_code)
-            logger.info("***Text returned:")
-            logger.info(r.text)
-        elif r.status_code != 200:
-            logger.info("***Feedback:", r.request.url, r.request.body)
-            logger.info(r.reason, r.status_code)
-            logger.info("***Text returned:")
-            logger.info(r.text)
-            # logger.info(r.reason, r.status_code)
-            # logger.info()
+        # if self.debug == True:
+        #     logger.info("***Feedback:", r.request.url, r.request.body)
+        #     logger.info(r.reason, r.status_code)
+        #     logger.info("***Text returned:")
+        #     logger.info(r.text)
+        # elif r.status_code != 200:
+        #     logger.info("***Feedback:", r.request.url, r.request.body)
+        #     logger.info(r.reason, r.status_code)
+        #     logger.info("***Text returned:")
+        #     logger.info(r.text)
+        #     # logger.info(r.reason, r.status_code)
+        #     # logger.info()
 
     # 	def scu_get(device, params = {}, r_ip = self.ip, r_port = port):
     def scu_get(self, device, params={}):
@@ -1434,12 +1435,12 @@ class scu:
         """
         logger.error("Not implemented because this function is not needed.")
         return
-        """This is a generic GET command into http: scu port + folder
-        with params=payload"""
-        URL = "http://" + self.ip + ":" + self.port + device
-        r = requests.get(url=URL, params=params)
-        self.feedback(r)
-        return r
+        # """This is a generic GET command into http: scu port + folder
+        # with params=payload"""
+        # URL = "http://" + self.ip + ":" + self.port + device
+        # r = requests.get(url=URL, params=params)
+        # self.feedback(r)
+        # return r
 
     def scu_put(self, device, payload={}, params={}, data=""):
         """
@@ -1458,12 +1459,12 @@ class scu:
         """
         logger.error("Not implemented because this function is not needed.")
         return
-        """This is a generic PUT command into http: scu port + folder
-        with json=payload"""
-        URL = "http://" + self.ip + ":" + self.port + device
-        r = requests.put(url=URL, json=payload, params=params, data=data)
-        self.feedback(r)
-        return r
+        # """This is a generic PUT command into http: scu port + folder
+        # with json=payload"""
+        # URL = "http://" + self.ip + ":" + self.port + device
+        # r = requests.put(url=URL, json=payload, params=params, data=data)
+        # self.feedback(r)
+        # return r
 
     def scu_delete(self, device, payload={}, params={}):
         """
@@ -1480,16 +1481,15 @@ class scu:
         """
         logger.error("Not implemented because this function is not needed.")
         return
-        """This is a generic DELETE command into http: scu port + folder
-        with params=payload"""
-        URL = "http://" + self.ip + ":" + self.port + device
-        r = requests.delete(url=URL, json=payload, params=params)
-        self.feedback(r)
-        return r
+        # """This is a generic DELETE command into http: scu port + folder
+        # with params=payload"""
+        # URL = "http://" + self.ip + ":" + self.port + device
+        # r = requests.delete(url=URL, json=payload, params=params)
+        # self.feedback(r)
+        # return r
 
     # SIMPLE PUTS
 
-    # command authority
     def command_authority(self, action: bool = None, username: str = ""):
         """
         Check and execute a command based on the specified action and username.
@@ -1502,7 +1502,7 @@ class scu:
         :rtype: result type
         :raises KeyError: If the action provided is not valid.
         """
-        if action not in authority:
+        if action not in authority:  # noqa: F821 TODO real problem
             logger.error("command_authority requires the action to be Get or Release!")
             return
         if len(username) <= 0:
@@ -1905,14 +1905,14 @@ class scu:
             1, start_time, start_restart_or_stop
         )
 
-    def acu_ska_track(self, number_of_entries: int = None, BODY: bytes = None):
+    def acu_ska_track(self, number_of_entries: int = None, body: bytes = None):
         """
         ACU SKA track.
 
         :param number_of_entries: Number of entries.
         :type number_of_entries: int
-        :param BODY: Body of bytes.
-        :type BODY: bytes
+        :param body: Body of bytes.
+        :type body: bytes
         """
         logger.info("acu ska track")
         if number_of_entries is None:
@@ -1921,7 +1921,7 @@ class scu:
                 "number of entries!"
             )
             return
-        self.commands["Tracking.TrackLoadTable"](0, number_of_entries, BODY)
+        self.commands["Tracking.TrackLoadTable"](0, number_of_entries, body)
 
     def acu_ska_track_stoploadingtable(self):
         """
@@ -1973,7 +1973,7 @@ class scu:
 
     # status get functions goes here
 
-    def status_Value(self, sensor):
+    def status_Value(self, sensor):  # noqa: N802
         """
         Get the value of a specific sensor from the attributes dictionary.
 
@@ -1985,7 +1985,7 @@ class scu:
         """
         return self.attributes[sensor].value
 
-    def status_finalValue(self, sensor):
+    def status_finalValue(self, sensor):  # noqa: N802
         """
         Return the final value status of a sensor.
 
@@ -2005,7 +2005,7 @@ class scu:
         # logger.info('finalValue: ', data)
         # return data
 
-    def commandMessageFields(self, commandPath):
+    def commandMessageFields(self, commandPath):  # noqa: N802,N803
         """
         Generate message fields for a specific command path.
 
@@ -2022,7 +2022,7 @@ class scu:
         #       {'path': commandPath})
         # return r
 
-    def statusMessageField(self, statusPath):
+    def statusMessageField(self, statusPath):  # noqa: N802,N803
         """
         Retrieve the status message field.
 
@@ -2065,7 +2065,8 @@ class scu:
 
     def create_logger(self, config_name, sensor_list):
         """
-        PUT create a config for logging
+        PUT create a config for logging.
+
         Usage:
         create_logger('HN_INDEX_TEST', hn_feed_indexer_sensors)
         or
@@ -2141,7 +2142,7 @@ class scu:
 
     def session_query(self, uid):
         """
-        GET specific session only - specified by uid number
+        GET specific session only - specified by uid number.
 
         Usage:
             session_query('16')
@@ -2152,7 +2153,8 @@ class scu:
 
     def session_delete(self, uid):
         """
-        DELETE specific session only - specified by uid number
+        DELETE specific session only - specified by uid number.
+
         Not working - returns response 500
         Usage:
         session_delete('16')
@@ -2163,7 +2165,8 @@ class scu:
 
     def session_rename(self, uid, new_name):
         """
-        RENAME specific session only - specified by uid number and new session name
+        RENAME specific session only - specified by uid number and new session name.
+
         Not working
         Works in browser display only, reverts when browser refreshed!
         Usage:
@@ -2175,8 +2178,9 @@ class scu:
 
     def export_session(self, uid, interval_ms=1000):
         """
-        EXPORT specific session - by uid and with interval
-        output r.text could be directed to be saved to file
+        EXPORT specific session.
+
+        By uid and with interval output r.text could be directed to be saved to file.
 
         Usage:
         export_session('16',1000)
@@ -2193,26 +2197,26 @@ class scu:
 
     def sorted_sessions(
         self,
-        isDescending="True",
-        startValue="1",
-        endValue="25",
-        sortBy="Name",
-        filterType="indexSpan",
+        is_descending="True",
+        start_value="1",
+        end_value="25",
+        sort_by="Name",
+        filter_type="indexSpan",
     ):
         """
         Retrieve a sorted list of sessions from the data logging endpoint.
 
-        :param isDescending: Flag to specify whether the sorting should be descending or
-            ascending. Default is descending.
-        :type isDescending: str
-        :param startValue: Starting value for the sorting range. Default is 1.
-        :type startValue: str
-        :param endValue: Ending value for the sorting range. Default is 25.
-        :type endValue: str
-        :param sortBy: Field to sort by. Default is 'Name'.
-        :type sortBy: str
-        :param filterType: Type of filtering to apply. Default is 'indexSpan'.
-        :type filterType: str
+        :param is_descending: Flag to specify whether the sorting should be descending
+            or ascending. Default is descending.
+        :type is_descending: str
+        :param start_value: Starting value for the sorting range. Default is 1.
+        :type start_value: str
+        :param end_value: Ending value for the sorting range. Default is 25.
+        :type end_value: str
+        :param sort_by: Field to sort by. Default is 'Name'.
+        :type sort_by: str
+        :param filter_type: Type of filtering to apply. Default is 'indexSpan'.
+        :type filter_type: str
         :return: A sorted list of sessions based on the specified parameters.
         :rtype: dict
         """
@@ -2220,11 +2224,11 @@ class scu:
         r = self.scu_get(
             "/datalogging/sortedSessions",
             {
-                "isDescending": isDescending,
-                "startValue": startValue,
-                "endValue": endValue,
-                "filterType": filterType,  # STRING - indexSpan|timeSpan,
-                "sortBy": sortBy,
+                "isDescending": is_descending,
+                "startValue": start_value,
+                "endValue": end_value,
+                "filterType": filter_type,  # STRING - indexSpan|timeSpan,
+                "sortBy": sort_by,
             },
         )
         return r
@@ -2232,8 +2236,10 @@ class scu:
     # get latest session
     def save_session(self, filename, interval_ms=1000, session="last"):
         """
-        Save session data as CSV after EXPORTing it Default interval is 1s Default is
-        last recorded session if specified no error checking to see if it exists.
+        Save session data as CSV after EXPORTing it.
+
+        Default interval is 1s. Default is last recorded session if specified no error
+        checking to see if it exists.
 
         Usage:
             export_session('16',1000)
@@ -2242,17 +2248,15 @@ class scu:
         from pathlib import Path
 
         logger.info(
-            "Attempt export and save of session: {} at rate {:.0f} ms".format(
-                session, interval_ms
-            )
+            "Attempt export and save of session: %s at rate %d ms", session, interval_ms
         )
         if session == "last":
             # get all logger sessions, may be many
-            r = self.logger_sessions()
+            # r = self.logger_sessions()
             # [-1] for end of list, and ['uuid'] to get uid of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        logger.info("Session uid: {} ".format(session))
+        logger.info("Session id: %s", session)
         file_time = str(int(time.time()))
         file_name = str(filename + "_" + file_time + ".csv")
         file_path = Path.cwd() / "output" / file_name
@@ -2265,8 +2269,10 @@ class scu:
     # (USING "START" AS TIMESTAMP)
     def save_session13(self, filename, start, interval_ms=1000, session="last"):
         """
-        Save session data as CSV after EXPORTing it Default interval is 1s Default is
-        last recorded session if specified no error checking to see if it exists.
+        Save session data as CSV after EXPORTing it.
+
+        Default interval is 1s. Default is last recorded session if specified no error
+        checking to see if it exists.
 
         Usage:
             export_session('16',1000)
@@ -2275,18 +2281,16 @@ class scu:
         from pathlib import Path
 
         logger.info(
-            "Attempt export and save of session: {} at rate {:.0f} ms".format(
-                session, interval_ms
-            )
+            "Attempt export and save of session: %s at rate %d ms", session, interval_ms
         )
         if session == "last":
             # get all logger sessions, may be many
-            r = self.logger_sessions()
+            # r = self.logger_sessions()
             # [-1] for end of list, and ['uuid'] to get uid of last session in list
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        logger.info("Session uid: {} ".format(session))
-        ##        file_time = str(int(time.time()))
+        logger.info("Session id: %s", session)
+        #        file_time = str(int(time.time()))
         file_time = str(int(start))
         file_name = str(filename + "_" + file_time + ".csv")
         file_path = Path.cwd() / "output" / file_name
@@ -2297,8 +2301,10 @@ class scu:
 
     def save_session14(self, filename, interval_ms=1000, session="last"):
         """
-        Save session data as CSV after EXPORTing it Default interval is 1s Default is
-        last recorded session if specified no error checking to see if it exists.
+        Save session data as CSV after EXPORTing it.
+
+        Default interval is 1s. Default is last recorded session if specified no error
+        checking to see if it exists.
 
         Usage:
             export_session('16',1000)
@@ -2307,16 +2313,14 @@ class scu:
         from pathlib import Path
 
         logger.info(
-            "Attempt export and save of session: {} at rate {:.0f} ms".format(
-                session, interval_ms
-            )
+            "Attempt export and save of session: %s at rate %d ms", session, interval_ms
         )
         if session == "last":
             # get all logger sessions, may be many
-            r = self.logger_sessions()
+            # r = self.logger_sessions()
             session = self.last_session()
         file_txt = self.export_session(session, interval_ms).text
-        logger.info("Session uid: {} ".format(session))
+        logger.info("Session id: %s", session)
         file_name = str(filename + ".csv")
         file_path = Path.cwd() / "output" / file_name
         logger.info("Log file location:", file_path)
@@ -2352,7 +2356,7 @@ class scu:
             time.sleep(1)
         logger.info(f" {sensor} done *")
 
-    def wait_finalValue(self, sensor, value):
+    def wait_finalValue(self, sensor, value):  # noqa: N802
         """
         Wait until the sensor reaches a specified value.
 
@@ -2363,7 +2367,7 @@ class scu:
         :raises: If the sensor does not reach the target value within a reasonable time.
         """
         logger.info(f"wait until sensor: {sensor} == value {value}")
-        while status_finalValue(sensor) != value:
+        while self.status_finalValue(sensor) != value:
             time.sleep(1)
         logger.info(f" {sensor} done *")
 
