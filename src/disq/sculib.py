@@ -573,7 +573,7 @@ class SCU:
         self.endpoint = endpoint
         self.namespace = namespace
         self.timeout = timeout
-        self.event_loop_thread = None
+        self.event_loop_thread: threading.Thread | None = None
         self.subscription_handler = None
         self.subscriptions = {}
         self.subscription_queue = queue.Queue()
@@ -687,12 +687,12 @@ class SCU:
         :type pw: str
         """
         # this is generated if it does not exist
-        opcua_client_key = Path(resources.files(__package__) / "certs/key.pem")
+        opcua_client_key = Path(str(resources.files(__package__) / "certs/key.pem"))
         # this is generated if it does not exist
-        opcua_client_cert = Path(resources.files(__package__) / "certs/cert.der")
+        opcua_client_cert = Path(str(resources.files(__package__) / "certs/cert.der"))
         # get from simulator/PKI/private/SimpleServer_2048.der in tarball
         opcua_server_cert = Path(
-            resources.files(__package__) / "certs/SimpleServer_2048.der"
+            str(resources.files(__package__) / "certs/SimpleServer_2048.der")
         )
         connection.set_user(user)
         connection.set_password(pw)
@@ -735,7 +735,7 @@ class SCU:
         encryption: bool = True,
         user: str = None,
         pw: str = None,
-    ) -> None:
+    ) -> Client:
         """
         Connect to an OPC UA server.
 
@@ -1523,9 +1523,10 @@ class SCU:
         :rtype: result type
         :raises KeyError: If the action provided is not valid.
         """
-        if action not in authority:  # noqa: F821 TODO real problem
-            logger.error("command_authority requires the action to be Get or Release!")
-            return
+        # TODO: authority not defined!
+        # if action not in authority:
+        #   logger.error("command_authority requires the action to be Get or Release!")
+        #   return
         if len(username) <= 0:
             logger.error(
                 "command_authority command requires a user as second parameter!"
