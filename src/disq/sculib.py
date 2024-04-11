@@ -1,5 +1,7 @@
 """System Control Unit library for an OPC UA server."""
 
+# pylint: disable=too-many-lines,broad-exception-caught
+
 # Feed Indexer tests [316-000000-043]
 # Author: P.P.A. Kotze
 # Date: 1/9/2020
@@ -361,6 +363,8 @@ def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     """
 
     class opc_ua_rw_attribute:  # noqa: N801
+        # pylint: disable=too-few-public-methods,missing-class-docstring
+        # pylint: disable=missing-function-docstring
         @property
         def value(self) -> Any:
             try:
@@ -396,6 +400,8 @@ def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     """
 
     class opc_ua_ro_attribute:  # noqa: N801
+        # pylint: disable=too-few-public-methods,missing-class-docstring
+        # pylint: disable=missing-function-docstring
         @property
         def value(self) -> Any:
             try:
@@ -408,6 +414,7 @@ def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     return opc_ua_ro_attribute()
 
 
+# pylint: disable=too-few-public-methods
 class SubscriptionHandler:
     """
     A class representing a Subscription Handler.
@@ -453,6 +460,7 @@ class SubscriptionHandler:
         self.subscription_queue.put(value_for_queue, block=True, timeout=0.1)
 
 
+# pylint: disable=too-many-public-methods,too-many-instance-attributes
 class SCU:
     """
     System Control Unit.
@@ -518,6 +526,7 @@ class SCU:
     ```
     """  # noqa: RST201,RST203,RST214,RST301
 
+    # pylint: disable=too-many-arguments
     def __init__(
         self,
         host: str = "localhost",
@@ -716,6 +725,7 @@ class SCU:
             self.event_loop,
         ).result()
 
+    # pylint: disable=too-many-arguments
     def connect(
         self,
         host: str,
@@ -1394,6 +1404,14 @@ class SCU:
             positions[:, 2],
         )
 
+    # TODO: Code below not used by DiSQ, so ignore most pylint rules
+    # pylint: disable=invalid-name,assignment-from-none,reimported,unspecified-encoding
+    # pylint: disable=unused-argument,dangerous-default-value,used-before-assignment
+    # pylint: disable=logging-too-many-args,logging-fstring-interpolation,useless-return
+    # pylint: disable=unreachable,pointless-string-statement,redefined-outer-name
+    # pylint: disable=inconsistent-return-statements,no-else-return,consider-using-with
+    # pylint: disable=consider-using-enumerate,import-outside-toplevel
+
     # Direct SCU webapi functions based on urllib PUT/GET
     def feedback(self, r):
         """
@@ -1816,6 +1834,7 @@ class SCU:
         #     az += [0] * padding
         #     el += [0] * padding
 
+        # pylint: disable=too-many-boolean-expressions
         if (entries > 0) and (
             (entries != len(t))
             or (entries != len(az))
