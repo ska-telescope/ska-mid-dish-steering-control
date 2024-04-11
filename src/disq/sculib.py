@@ -31,11 +31,14 @@ import threading
 import time
 from importlib import resources
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
-import asyncua
 import numpy
 import yaml
+from asyncua import Client, Node, ua
+from asyncua.crypto.cert_gen import setup_self_signed_certificate
+from asyncua.crypto.security_policies import SecurityPolicyBasic256
+from cryptography.x509.oid import ExtendedKeyUsageOID
 
 logger = logging.getLogger("sculib")
 
@@ -57,7 +60,7 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         )
     config = None
     if os.path.exists(disq_log_config_file):
-        with open(disq_log_config_file, "rt") as f:
+        with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
             try:
                 config = yaml.safe_load(f.read())
                 at_time = datetime.time.fromisoformat(
@@ -232,7 +235,7 @@ hn_tilt_sensors = [
     "acu.pointing.incl_corr_val_el",
 ]
 
-hn_opcua_tilt_sensors = [
+HN_OPCUA_TILT_SENSORS = [
     "Azimuth.AxisState",
     "Azimuth.p_Set",
     "Azimuth.p_Act",
@@ -285,7 +288,7 @@ async def handle_exception(e: Exception) -> None:
     logger.exception("*** Exception caught: %s", e)
 
 
-def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
+def create_command_function(node: Node, event_loop: asyncio.AbstractEventLoop):
     """
     Create a command function to execute a method on a specified Node.
 
@@ -325,10 +328,11 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
                 call(uid, *args), event_loop
             ).result()
             return_msg: str = ""
-            if hasattr(asyncua.ua, "CmdResponseType") and return_code is not None:
+            if hasattr(ua, "CmdResponseType") and return_code is not None:
                 # The asyncua library has a CmdResponseType enum ONLY if the opcua
                 # server implements the type
-                return_msg = asyncua.ua.CmdResponseType(return_code).name
+                # pylint: disable=no-member
+                return_msg = ua.CmdResponseType(return_code).name
             else:
                 return_msg = str(return_code)
         except Exception as e:
@@ -341,7 +345,7 @@ def create_command_function(node: asyncua.Node, event_loop: asyncio.AbstractEven
     return fn
 
 
-def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
+def create_rw_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
     """
     Create a read-write attribute for an OPC UA node.
 
@@ -363,7 +367,7 @@ def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     """
 
     class opc_ua_rw_attribute:  # noqa: N801
-        # pylint: disable=too-few-public-methods,missing-class-docstring
+        # pylint: disable=too-few-public-methods,missing-class-docstring,invalid-name
         # pylint: disable=missing-function-docstring
         @property
         def value(self) -> Any:
@@ -373,20 +377,19 @@ def create_rw_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
                 ).result()
             except Exception as e:
                 asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+                return None
 
         @value.setter
         def value(self, _value: Any) -> None:
             try:
-                asyncio.run_coroutine_threadsafe(
-                    node.set_value(_value), event_loop
-                ).result()
+                asyncio.run_coroutine_threadsafe(node.set_value(_value), event_loop)
             except Exception as e:
                 asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
 
     return opc_ua_rw_attribute()
 
 
-def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoop):
+def create_ro_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
     """
     Create a read-only attribute for an OPC UA Node.
 
@@ -400,7 +403,7 @@ def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
     """
 
     class opc_ua_ro_attribute:  # noqa: N801
-        # pylint: disable=too-few-public-methods,missing-class-docstring
+        # pylint: disable=too-few-public-methods,missing-class-docstring,invalid-name
         # pylint: disable=missing-function-docstring
         @property
         def value(self) -> Any:
@@ -410,6 +413,7 @@ def create_ro_attribute(node: asyncua.Node, event_loop: asyncio.AbstractEventLoo
                 ).result()
             except Exception as e:
                 asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+                return None
 
     return opc_ua_ro_attribute()
 
@@ -438,7 +442,7 @@ class SubscriptionHandler:
         self.nodes = nodes
 
     def datachange_notification(
-        self, node: asyncua.Node, value: Any, data: asyncua.ua.DataChangeNotification
+        self, node: Node, value: Any, data: ua.DataChangeNotification
     ) -> None:
         """
         Callback for an asyncua subscription.
@@ -577,7 +581,7 @@ class SCU:
             self.create_and_start_asyncio_event_loop()
         else:
             self.event_loop = eventloop
-        logger.info(f"Event loop: {self.event_loop}")
+        logger.info("Event loop: %s", self.event_loop)
         try:
             self.connection = self.connect(
                 self.host, self.port, self.endpoint, self.timeout, encryption=False
@@ -672,7 +676,6 @@ class SCU:
         thread_started_event.wait(5.0)  # Wait for the event loop thread to start
 
     def set_up_encryption(self, connection, user: str, pw: str) -> None:
-        # this is generated if it does not exist
         """
         Set up encryption for the connection with the given user credentials.
 
@@ -683,6 +686,7 @@ class SCU:
         :param pw: The password for the connection.
         :type pw: str
         """
+        # this is generated if it does not exist
         opcua_client_key = Path(resources.files(__package__) / "certs/key.pem")
         # this is generated if it does not exist
         opcua_client_cert = Path(resources.files(__package__) / "certs/cert.der")
@@ -692,10 +696,6 @@ class SCU:
         )
         connection.set_user(user)
         connection.set_password(pw)
-        from asyncua.crypto.cert_gen import setup_self_signed_certificate
-        from asyncua.crypto.security_policies import SecurityPolicyBasic256
-        from asyncua.ua import MessageSecurityMode
-        from cryptography.x509.oid import ExtendedKeyUsageOID
 
         client_app_uri = "urn:freeopcua:client"
         _ = asyncio.run_coroutine_threadsafe(
@@ -720,7 +720,7 @@ class SCU:
                 certificate=str(opcua_client_cert),
                 private_key=str(opcua_client_key),
                 server_certificate=str(opcua_server_cert),
-                mode=MessageSecurityMode.Sign,
+                mode=ua.MessageSecurityMode.Sign,
             ),
             self.event_loop,
         ).result()
@@ -757,8 +757,8 @@ class SCU:
         :raises: Exception if an error occurs during the connection process.
         """
         opc_ua_server = f"opc.tcp://{host}:{port}{endpoint}"
-        logger.info(f"Connecting to: {opc_ua_server}")
-        connection = asyncua.Client(opc_ua_server, timeout)
+        logger.info("Connecting to: %s", opc_ua_server)
+        connection = Client(opc_ua_server, timeout)
         if encryption:
             self.set_up_encryption(connection, user, pw)
         _ = asyncio.run_coroutine_threadsafe(
@@ -841,7 +841,9 @@ class SCU:
     def connection_reset(self) -> None:
         """Reset the connection by disconnecting and reconnecting."""
         self.disconnect()
-        self.connect()
+        self.connect(
+            self.host, self.port, self.endpoint, self.timeout, encryption=False
+        )
 
     def populate_node_dicts(self) -> None:
         # Create three dicts:
@@ -963,7 +965,7 @@ class SCU:
 
     def generate_full_node_name(
         self,
-        node: asyncua.Node,
+        node: Node,
         parent_names: list[str] | None,
         node_name_separator: str = ".",
     ) -> tuple[str, list[str]]:
@@ -999,12 +1001,13 @@ class SCU:
 
         return (node_name, ancestors)
 
+    # pylint: disable=unused-argument
     def get_sub_nodes(
         self,
-        node: asyncua.Node,
+        node: Node,
         node_name_separator: str = ".",
         parent_names: list[str] | None = None,
-    ) -> (dict, dict, dict):
+    ) -> tuple[dict, dict, dict]:
         """
         Retrieve sub-nodes, attributes, and commands of a given node.
 
@@ -1027,8 +1030,8 @@ class SCU:
             or node_name.endswith(".OutputArguments", node_name.rfind(".")) is True
         ):
             return nodes, attributes, commands
-        else:
-            nodes[node_name] = node
+
+        nodes[node_name] = node
         node_class = (
             asyncio.run_coroutine_threadsafe(node.read_node_class(), self.event_loop)
             .result()
@@ -1144,7 +1147,7 @@ class SCU:
         """
         return self.__get_node_list(self.server_attributes)
 
-    def __get_node_list(self, nodes) -> None:
+    def __get_node_list(self, nodes: dict) -> list[str]:
         """
         Get a list of node keys from a dictionary of nodes.
 
@@ -1153,15 +1156,10 @@ class SCU:
         :return: A list of node keys.
         :rtype: list
         """
-        info = ""
-        for key in nodes.keys():
-            info += f"{key}\n"
-        logger.debug(info)
+        logger.debug("\n".join(nodes.keys()))
         return list(nodes.keys())
 
-    def get_attribute_data_type(
-        self, attribute: str | asyncua.ua.uatypes.NodeId
-    ) -> str:
+    def get_attribute_data_type(self, attribute: str | ua.uatypes.NodeId) -> str:
         """
         Get the data type for the given node.
 
@@ -1172,7 +1170,7 @@ class SCU:
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
             ).result()
-        elif isinstance(attribute, asyncua.ua.uatypes.NodeId):
+        elif isinstance(attribute, ua.uatypes.NodeId):
             dt_id = attribute
 
         dt_node = self.connection.get_node(dt_id)
@@ -1195,8 +1193,8 @@ class SCU:
 
         # load_data_type_definitions() called in connect() adds new classes to the
         # asyncua.ua module.
-        if dt_name in dir(asyncua.ua):
-            if issubclass(getattr(asyncua.ua, dt_name), enum.Enum):
+        if dt_name in dir(ua):
+            if issubclass(getattr(ua, dt_name), enum.Enum):
                 return "Enumeration"
 
         return "Unknown"
@@ -1204,8 +1202,8 @@ class SCU:
     def _enum_fields_out_of_order(
         self,
         index: int,
-        field: asyncua.ua.uaprotocol_auto.EnumField,
-        enum_node: asyncua.ua.uatypes.NodeId,
+        field: ua.uaprotocol_auto.EnumField,
+        enum_node: ua.uatypes.NodeId,
     ) -> str:
         """
         Check if the fields of an enumeration are out of order.
@@ -1227,15 +1225,18 @@ class SCU:
             .Name
         )
         logger.error(
-            f"Incorrect index for field {field.Name} of enumeration {enum_name}. "
-            f"Expected: {index}, actual: {field.Value}"
+            "Incorrect index for field %s of enumeration %s. Expected: %d, actual: %d",
+            field.Name,
+            enum_name,
+            index,
+            field.Value,
         )
         return (
             f"ERROR: incorrect index for {field.Name}; expected: {index} "
             f"actual: {field.Value}"
         )
 
-    def get_enum_strings(self, enum_node: str | asyncua.ua.uatypes.NodeId) -> list[str]:
+    def get_enum_strings(self, enum_node: str | ua.uatypes.NodeId) -> list[str]:
         """
         Get list of enum strings where the index of the list matches the enum value.
 
@@ -1247,7 +1248,7 @@ class SCU:
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
             ).result()
-        elif isinstance(enum_node, asyncua.ua.uatypes.NodeId):
+        elif isinstance(enum_node, ua.uatypes.NodeId):
             dt_id = enum_node
 
         dt_node = self.connection.get_node(dt_id)
@@ -1264,9 +1265,10 @@ class SCU:
             for index, field in enumerate(dt_node_def.Fields)
         ]
 
+    # pylint: disable=dangerous-default-value
     def subscribe(
         self,
-        attributes: Union[str, list[str]] = hn_opcua_tilt_sensors,
+        attributes: str | list[str] = HN_OPCUA_TILT_SENSORS,
         period: int = 100,
         data_queue: queue.Queue = None,
     ) -> int:
@@ -1334,7 +1336,7 @@ class SCU:
     def unsubscribe_all(self) -> None:
         """Unsubscribe all subscriptions."""
         while len(self.subscriptions) > 0:
-            uid, subscription = self.subscriptions.popitem()
+            _, subscription = self.subscriptions.popitem()
             _ = asyncio.run_coroutine_threadsafe(
                 subscription["subscription"].delete(), self.event_loop
             ).result()
@@ -1392,12 +1394,13 @@ class SCU:
         :param file_name: File name of the track table file including its path.
         :type file_name: str
         """
+        # pylint: disable=no-member
         positions = self.load_track_table_file(file_name)
         # Reset the currently loaded track table.
-        self.load_program_track(asyncua.ua.LoadEnumType.Reset, 0, [0.0], [0.0], [0.0])
+        self.load_program_track(ua.LoadEnumType.Reset, 0, [0.0], [0.0], [0.0])
         # Submit the new track table.
         self.load_program_track(
-            asyncua.ua.LoadEnumType.New,
+            ua.LoadEnumType.New,
             len(positions),
             positions[:, 0],
             positions[:, 1],
@@ -1623,7 +1626,7 @@ class SCU:
             "Band 5c": 7,
         }
         logger.info("move to band:", position)
-        if not (isinstance(position, str)):
+        if not isinstance(position, str):
             return self.commands["Management.Move2Band"](position)
         else:
             return self.commands["Management.Move2Band"](bands[position])
@@ -1866,8 +1869,8 @@ class SCU:
         try:
             return self.commands["Tracking.TrackLoadTable"](
                 load_type,
-                asyncua.ua.UInt16(entries),
-                asyncua.ua.ByteString(byte_string),
+                ua.UInt16(entries),
+                ua.ByteString(byte_string),
             )
         except Exception:
             logger.warning(
@@ -1888,8 +1891,8 @@ class SCU:
         try:
             return self.commands["Tracking.TrackLoadTable"](
                 load_type,
-                asyncua.ua.UInt16(entries),
-                asyncua.ua.ByteString(byte_string),
+                ua.UInt16(entries),
+                ua.ByteString(byte_string),
             )
         except Exception as e:
             logger.exception(
