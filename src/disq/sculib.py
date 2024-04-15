@@ -258,7 +258,7 @@ HN_OPCUA_TILT_SENSORS = [
     "Tracking.TrackStatus.act_staticOffset_value_El",
     "Tracking.TrackStatus.act_staticOffset_value_Xel",
     "Pointing.PmCorrOnOff",
-    # "Pointing.BandForCorr",
+    "Pointing.BandForCorr",
     "Pointing.PointCorr_El",
     "Pointing.PointCorr_Az",
     "Pointing.StaticPmParam.ABA",
