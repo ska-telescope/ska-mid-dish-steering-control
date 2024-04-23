@@ -63,16 +63,20 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
             try:
                 config = yaml.safe_load(f.read())
-                at_time = datetime.time.fromisoformat(
-                    config["handlers"]["file_handler"]["atTime"]
-                )
-                config["handlers"]["file_handler"]["atTime"] = at_time
             except Exception as e:
-                print(e)
+                print(f"{type(e).__name__}: '{e}'")
                 print(
                     "WARNING: Unable to read logging configuration file "
                     f"{disq_log_config_file}"
                 )
+        try:
+            at_time = datetime.time.fromisoformat(
+                config["handlers"]["file_handler"]["atTime"]
+            )
+            config["handlers"]["file_handler"]["atTime"] = at_time
+        except KeyError as e:
+            print(f"WARNING: {e} not found in logging configuration for file_handler")
+
     else:
         print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
 
@@ -84,7 +88,7 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         try:
             logging.config.dictConfig(config)
         except ValueError as e:
-            print(e)
+            print(f"{type(e).__name__}: '{e}'")
             print(
                 "WARNING: Caught exception. Unable to configure logging from file "
                 f"{disq_log_config_file}. Reverting to logging to the console "
