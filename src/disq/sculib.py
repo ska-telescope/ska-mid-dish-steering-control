@@ -1409,7 +1409,7 @@ class SCU:
 
     # TODO: Code below not used by DiSQ, so ignore most pylint rules
     # pylint: disable=invalid-name,assignment-from-none,reimported,unspecified-encoding
-    # pylint: disable=unused-argument,dangerous-default-value,used-before-assignment
+    # pylint: disable=unused-argument,dangerous-default-value
     # pylint: disable=logging-too-many-args,logging-fstring-interpolation,useless-return
     # pylint: disable=unreachable,pointless-string-statement,redefined-outer-name
     # pylint: disable=inconsistent-return-statements,no-else-return,consider-using-with
