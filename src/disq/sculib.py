@@ -423,7 +423,9 @@ def create_rw_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
         @value.setter
         def value(self, _value: Any) -> None:
             try:
-                asyncio.run_coroutine_threadsafe(node.set_value(_value), event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    node.set_value(_value), event_loop
+                ).result()
             except Exception as e:
                 asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
 
