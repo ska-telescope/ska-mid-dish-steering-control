@@ -326,7 +326,7 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
     :param e: The exception that was caught.
     :type e: Exception
     """
-    logger.exception("*** Exception caught: %s [context: %s]" % (e, msg))
+    logger.exception("*** Exception caught: %s [context: %s]", e, msg)
 
 
 def create_command_function(
@@ -1123,7 +1123,9 @@ class SCU:
                 node, self.event_loop, node_name
             )
             # else:
-            # attributes[node_name] = create_ro_attribute(node, self.event_loop, node_name)
+            # attributes[node_name] = create_ro_attribute(
+            #     node, self.event_loop, node_name
+            # )
         elif node_class == 4:
             # A command. Add it to the commands dict.
             commands[node_name] = create_command_function(
