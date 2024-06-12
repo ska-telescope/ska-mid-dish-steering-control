@@ -319,17 +319,19 @@ HN_OPCUA_TILT_SENSORS = [
 ]
 
 
-async def handle_exception(e: Exception) -> None:
+async def handle_exception(e: Exception, msg: str = "") -> None:
     """
     Handle and log an exception.
 
     :param e: The exception that was caught.
     :type e: Exception
     """
-    logger.exception("*** Exception caught: %s", e)
+    logger.exception("*** Exception caught: %s [context: %s]", e, msg)
 
 
-def create_command_function(node: Node, event_loop: asyncio.AbstractEventLoop):
+def create_command_function(
+    node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
+):
     """
     Create a command function to execute a method on a specified Node.
 
@@ -337,6 +339,8 @@ def create_command_function(node: Node, event_loop: asyncio.AbstractEventLoop):
     :type node: asyncua.Node
     :param event_loop: The asyncio event loop to run the coroutine on.
     :type event_loop: asyncio.AbstractEventLoop
+    :param node_name: The full name of the Node.
+    :type node_name: str
     :return: A function that can be used to execute a method on the Node.
     :rtype: function
     """
@@ -378,15 +382,19 @@ def create_command_function(node: Node, event_loop: asyncio.AbstractEventLoop):
                 return_msg = str(return_code)
         except Exception as e:
             # e.add_note(f'Command: {uid} args: {args}')
-            asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+            return_msg = f"Command: {uid} ({node_name}), args: {args}"
+            asyncio.run_coroutine_threadsafe(
+                handle_exception(e, return_msg), event_loop
+            )
             return_code = -1
-            return_msg = f"Command: {uid}, args: {args}, exception: {e}"
         return return_code, return_msg
 
     return fn
 
 
-def create_rw_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
+def create_rw_attribute(
+    node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
+):
     """
     Create a read-write attribute for an OPC UA node.
 
@@ -395,6 +403,9 @@ def create_rw_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
 
     :param event_loop: The asyncio event loop to use for running coroutines.
     :type event_loop: asyncio.AbstractEventLoop
+
+    :param node_name: The name of the OPC UA node.
+    :type node_name: str
 
     :return: An instance of a read-write attribute for the given OPC UA node.
     :rtype: opc_ua_rw_attribute
@@ -417,20 +428,26 @@ def create_rw_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
                     node.get_value(), event_loop
                 ).result()
             except Exception as e:
-                asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+                msg = f"Failed to read value of node: {node_name}"
+                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
                 return None
 
         @value.setter
         def value(self, _value: Any) -> None:
             try:
-                asyncio.run_coroutine_threadsafe(node.set_value(_value), event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    node.set_value(_value), event_loop
+                ).result()
             except Exception as e:
-                asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+                msg = f"Failed to write value of node: {node_name}={_value}"
+                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
 
     return opc_ua_rw_attribute()
 
 
-def create_ro_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
+def create_ro_attribute(
+    node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
+):
     """
     Create a read-only attribute for an OPC UA Node.
 
@@ -438,6 +455,8 @@ def create_ro_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
     :type node: asyncua.Node
     :param event_loop: The asyncio event loop to use.
     :type event_loop: asyncio.AbstractEventLoop
+    :param node_name: The name of the OPC UA node.
+    :type node_name: str
     :return: An object with a read-only 'value' property.
     :rtype: opc_ua_ro_attribute
     :raises Exception: If an error occurs while getting the value from the OPC UA Node.
@@ -453,7 +472,8 @@ def create_ro_attribute(node: Node, event_loop: asyncio.AbstractEventLoop):
                     node.get_value(), event_loop
                 ).result()
             except Exception as e:
-                asyncio.run_coroutine_threadsafe(handle_exception(e), event_loop)
+                msg = f"Failed to read value of node: {node_name}"
+                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
                 return None
 
     return opc_ua_ro_attribute()
@@ -1099,12 +1119,18 @@ class SCU:
             #
             # Check if RO or RW and call the respective creator functions.
             # if node.figure_out_if_RW_or_RO is RW:
-            attributes[node_name] = create_rw_attribute(node, self.event_loop)
+            attributes[node_name] = create_rw_attribute(
+                node, self.event_loop, node_name
+            )
             # else:
-            # attributes[node_name] = create_ro_attribute(node, self.event_loop)
+            # attributes[node_name] = create_ro_attribute(
+            #     node, self.event_loop, node_name
+            # )
         elif node_class == 4:
             # A command. Add it to the commands dict.
-            commands[node_name] = create_command_function(node, self.event_loop)
+            commands[node_name] = create_command_function(
+                node, self.event_loop, node_name
+            )
         return nodes, attributes, commands
 
     def get_node_list(self) -> list[str]:
