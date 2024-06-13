@@ -766,6 +766,15 @@ class SCU:
             self.host, self.port, self.endpoint, self.timeout, encryption=False
         )
 
+    def is_connected(self) -> bool:
+        """
+        Check if the SCU is connected to an OPC-UA server.
+
+        :return: True if the SCU has a connection, False otherwise.
+        :rtype: bool
+        """
+        return self.connection is not None
+
     def populate_node_dicts(self) -> None:
         # Create three dicts:
         # nodes, attributes, commands
