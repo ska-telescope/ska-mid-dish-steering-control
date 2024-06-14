@@ -31,7 +31,7 @@ import threading
 import time
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy
 import yaml
@@ -191,7 +191,7 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
 
 def create_command_function(
     node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
-):
+) -> Callable:
     """
     Create a command function to execute a method on a specified Node.
 
@@ -212,15 +212,16 @@ def create_command_function(
     read_name = asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop)
     uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
 
-    def fn(*args) -> Any:
+    def fn(*args) -> tuple[int, str, list[int | None] | None]:
         """
         Execute function with arguments and return tuple with return code and message.
 
         :param args: Optional positional arguments to pass to the function.
-        :type args: Tuple
+        :type args: tuple
 
-        :return: A tuple containing the return code (int) and return message (str).
-        :rtype: Tuple[int, str]
+        :return: A tuple containing the return code (int), return message (str), and a
+            list of other returned values (Any), if any, otherwise None.
+        :rtype: tuple[int, str, list[Any] | None]
 
         :raises: Any exception raised during the execution of the function will be
             handled by the function and a tuple with return code -1 and exception
@@ -229,25 +230,30 @@ def create_command_function(
         Note: This function uses asyncio to run the coroutine in a separate thread.
         """
         try:
-            return_code = asyncio.run_coroutine_threadsafe(
+            result: int | list[Any] = asyncio.run_coroutine_threadsafe(
                 call(uid, *args), event_loop
             ).result()
-            return_msg: str = ""
+            if isinstance(result, list):
+                return_code: int = result.pop(0)
+                return_vals = result
+            else:
+                return_code = result
+                return_vals = None
             if hasattr(ua, "CmdResponseType") and return_code is not None:
                 # The asyncua library has a CmdResponseType enum ONLY if the opcua
                 # server implements the type
                 # pylint: disable=no-member
-                return_msg = ua.CmdResponseType(return_code).name
+                return_msg = str(ua.CmdResponseType(return_code).name)
             else:
                 return_msg = str(return_code)
+            return (return_code, return_msg, return_vals)
         except Exception as e:
             # e.add_note(f'Command: {uid} args: {args}')
-            return_msg = f"Command: {uid} ({node_name}), args: {args}"
             asyncio.run_coroutine_threadsafe(
-                handle_exception(e, return_msg), event_loop
+                handle_exception(e, f"Command: {uid} ({node_name}), args: {args}"),
+                event_loop,
             )
-            return_code = -1
-        return return_code, return_msg
+            return -1, f"asyncua exception: {str(e)}", None
 
     return fn
 
