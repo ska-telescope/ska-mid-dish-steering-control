@@ -97,86 +97,6 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
             logging.basicConfig(level=default_log_level)
 
 
-OPCUA_ATTRIBUTES = [
-    "Azimuth.Status.AxisState",
-    "Azimuth.Status.p_Set",
-    "Azimuth.Status.p_Act",
-    "Azimuth.Status.v_Act",
-    "Elevation.Status.AxisState",
-    "Elevation.Status.p_Set",
-    "Elevation.Status.p_Act",
-    "Elevation.Status.v_Act",
-    "Management.Status.FiPos",
-    "Management.PowerStatus.ActPwrCnsm",
-    "Management.PowerStatus.CurrentPh1",
-    "Management.PowerStatus.CurrentPh2",
-    "Management.PowerStatus.CurrentPh3",
-    "Management.PowerStatus.PowerFactor",
-    "Management.PowerStatus.VoltagePh1",
-    "Management.PowerStatus.VoltagePh2",
-    "Management.PowerStatus.VoltagePh3",
-    "Management.TempHumidStatus.TempPSC_Inlet",
-    "Management.TempHumidStatus.TempPSC_Outlet",
-    "Tracking.Status.act_statOffset_value_El",
-    "Tracking.Status.act_statOffset_value_Xel",
-    # "Pointing.TempCorrActive",
-    "Pointing.Status.ActAmbTemp_East",
-    "Pointing.Status.ActAmbTemp_South",
-    "Pointing.Status.ActAmbTemp_West",
-    "Pointing.Status.AmbTempCorrVal_Az",
-    "Pointing.Status.AmbTempCorrVal_El",
-    "Pointing.Status.BandForCorr",
-    "Pointing.Status.StaticCorrActive",
-    "Pointing.Status.StaticPmCorrVal_Az",
-    "Pointing.Status.StaticPmCorrVal_El",
-    "Pointing.Status.TiltCorrActive",
-    "Pointing.Status.TiltCorrVal_Az",
-    "Pointing.Status.TiltCorrVal_El",
-    "Pointing.Status.TiltOne_On",
-    "Pointing.Status.TiltTemp_One",
-    "Pointing.Status.TiltTemp_Two",
-    "Pointing.Status.TiltTwo_On",
-    "Pointing.Status.TiltXArcsec_One",
-    "Pointing.Status.TiltXArcsec_Two",
-    "Pointing.Status.TiltXFilt_One",
-    "Pointing.Status.TiltXFilt_Two",
-    "Pointing.Status.TiltXRaw_mV_One",
-    "Pointing.Status.TiltXRaw_mV_Two",
-    "Pointing.Status.TiltYArcsec_One",
-    "Pointing.Status.TiltYArcsec_Two",
-    "Pointing.Status.TiltYFilt_One",
-    "Pointing.Status.TiltYFilt_Two",
-    "Pointing.Status.TiltYRaw_mV_One",
-    "Pointing.Status.TiltYRaw_mV_Two",
-    "Pointing.StaticPmParameters.ABA",
-    "Pointing.StaticPmParameters.ABphi",
-    "Pointing.StaticPmParameters.ACEC",
-    "Pointing.StaticPmParameters.ACES",
-    "Pointing.StaticPmParameters.AN",
-    "Pointing.StaticPmParameters.AN0",
-    "Pointing.StaticPmParameters.AW",
-    "Pointing.StaticPmParameters.AW0",
-    "Pointing.StaticPmParameters.CA",
-    "Pointing.StaticPmParameters.ECEC",
-    "Pointing.StaticPmParameters.ECES",
-    "Pointing.StaticPmParameters.HECE4",
-    "Pointing.StaticPmParameters.HECE8",
-    "Pointing.StaticPmParameters.HESE4",
-    "Pointing.StaticPmParameters.HESE8",
-    "Pointing.StaticPmParameters.IA",
-    "Pointing.StaticPmParameters.IE",
-    "Pointing.StaticPmParameters.NPAE",
-    "Pointing.AmbTempParameters.Filt_dt",
-    "Pointing.AmbTempParameters.AmbTempParam1",
-    "Pointing.AmbTempParameters.AmbTempParam2",
-    "Pointing.AmbTempParameters.AmbTempParam3",
-    "Pointing.AmbTempParameters.AmbTempParam4",
-    "Pointing.AmbTempParameters.AmbTempParam5",
-    "Pointing.AmbTempParameters.AmbTempParam6",
-    "Time_cds.Status.DscTimeSyncSource",
-]
-
-
 async def handle_exception(e: Exception, msg: str = "") -> None:
     """
     Handle and log an exception.
@@ -185,75 +105,6 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
     :type e: Exception
     """
     logger.exception("*** Exception caught: %s [context: %s]", e, msg)
-
-
-def create_command_function(
-    node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
-) -> Callable:
-    """
-    Create a command function to execute a method on a specified Node.
-
-    :param node: The Node on which the method will be executed.
-    :type node: asyncua.Node
-    :param event_loop: The asyncio event loop to run the coroutine on.
-    :type event_loop: asyncio.AbstractEventLoop
-    :param node_name: The full name of the Node.
-    :type node_name: str
-    :return: A function that can be used to execute a method on the Node.
-    :rtype: function
-    """
-    call = (
-        asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop)
-        .result()
-        .call_method
-    )
-    read_name = asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop)
-    uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
-
-    def fn(*args) -> tuple[int, str, list[int | None] | None]:
-        """
-        Execute function with arguments and return tuple with return code and message.
-
-        :param args: Optional positional arguments to pass to the function.
-        :type args: tuple
-
-        :return: A tuple containing the return code (int), return message (str), and a
-            list of other returned values (Any), if any, otherwise None.
-        :rtype: tuple[int, str, list[Any] | None]
-
-        :raises: Any exception raised during the execution of the function will be
-            handled by the function and a tuple with return code -1 and exception
-            message will be returned.
-
-        Note: This function uses asyncio to run the coroutine in a separate thread.
-        """
-        try:
-            result: int | list[Any] = asyncio.run_coroutine_threadsafe(
-                call(uid, *args), event_loop
-            ).result()
-            if isinstance(result, list):
-                return_code: int = result.pop(0)
-                return_vals = result
-            else:
-                return_code = result
-                return_vals = None
-            if hasattr(ua, "CmdResponseType") and return_code is not None:
-                # The asyncua library has a CmdResponseType enum ONLY if the opcua
-                # server implements the type
-                # pylint: disable=no-member
-                return_msg = str(ua.CmdResponseType(return_code).name)
-            else:
-                return_msg = str(return_code)
-            return (return_code, return_msg, return_vals)
-        except Exception as e:
-            # e.add_note(f'Command: {uid} args: {args}')
-            asyncio.run_coroutine_threadsafe(
-                handle_exception(e, f"Command: {uid} ({node_name}), args: {args}"),
-                event_loop,
-            )
-            return -1, f"asyncua exception: {str(e)}", None
-
-    return fn
 
 
 def create_rw_attribute(
@@ -466,7 +317,7 @@ class SCU:
         password: str | None = None,
         timeout: float = 10.0,
         eventloop: asyncio.AbstractEventLoop | None = None,
-        debug: bool = False,
+        gui_app: bool = False,
     ) -> None:
         """
         Initializes the sculib with the provided parameters.
@@ -487,12 +338,11 @@ class SCU:
         :type timeout: float
         :param eventloop: The asyncio event loop to use. Default is None.
         :type eventloop: asyncio.AbstractEventLoop | None
-        :param debug: Whether debug mode is enabled. Default is False.
-        :type debug: bool
+        :param gui_app: Whether the instance is for a GUI application. Default is False.
+        :type gui_app: bool
         :raises Exception: If connection to OPC UA server fails.
         """
         logger.info("Initialising sculib")
-        self.init_called = False
         self.host = host
         self.port = port
         self.endpoint = endpoint
@@ -515,8 +365,8 @@ class SCU:
             try:
                 # TODO: why these user/pw?
                 # These appear to NOT be default ones for the CETC54 simulator...
-                user = "lmc"
-                pw = "lmclmclmc"
+                user = "LMC"
+                pw = "lmc"
                 if username is not None:
                     user = username
                 if password is not None:
@@ -539,11 +389,12 @@ class SCU:
                 )
                 logger.error("%s - %s", msg, e)
                 raise e
-        logger.info("Populating nodes dicts from server. This will take about 1s...")
-        self.populate_node_dicts()
-        self.debug = debug
-        self.init_called = True
+        logger.info("Populating nodes dicts from server. This can take a while...")
+        self.populate_node_dicts(gui_app)
         logger.info("Initialising sculib done.")
+        # self._user: ua.DscCmdAuthorityType | None = None
+        self._user: int | None = None
+        self._session_id: ua.UInt16 | None = None
 
     def __del__(self) -> None:
         """
@@ -779,7 +630,155 @@ class SCU:
         """
         return self.connection is not None
 
-    def populate_node_dicts(self) -> None:
+    def take_authority(self, user: str | int) -> tuple[int, str]:
+        """
+        Take command authority.
+
+        :param user: Authority user name - DscCmdAuthorityType enum.
+        :type user: str | int (ua.DscCmdAuthorityType)
+        :return: The result of the command execution.
+        :rtype: tuple[int, str]
+        """
+        if self._user is None and self._session_id is None:
+            self._user = (
+                self.convert_user_to_type(user) if isinstance(user, str) else user
+            )
+            code, msg, vals = self.commands["CommandArbiter.Commands.TakeAuth"](
+                self._user
+            )
+            if vals is None or (isinstance(vals, list) and vals[0] is None):
+                self._user = None
+                logger.error("TakeAuth command failed with message '%s'", msg)
+            else:
+                self._session_id = ua.UInt16(vals[0])
+        else:
+            code = -1
+            msg = f"DiSQ already has command authority with user {self._user}"
+            logger.info("TakeAuth command not executed, as %s", msg)
+        return code, msg
+
+    def release_authority(self) -> tuple[int, str]:
+        """
+        Release command authority.
+
+        :return: The result of the command execution.
+        :rtype: tuple[int, str]
+        """
+        if self._user is not None and self._session_id is not None:
+            code, msg, _ = self.commands["CommandArbiter.Commands.ReleaseAuth"](
+                self._user
+            )
+            if code == 10:  # CommandDone
+                self._user = None
+                self._session_id = None
+        else:
+            code = -1
+            msg = "DiSQ has no command authority to release."
+            logger.info(msg)
+        return code, msg
+
+    def convert_user_to_type(self, user: str) -> int:
+        """
+        Convert user string to DscCmdAuthorityType enum (integer value).
+
+        :param user: the user to convert to enum
+        :type user: str
+        :return: DscCmdAuthorityType enum integer value
+        :rtype: int
+        """
+        try:
+            return ua.DscCmdAuthorityType[user]
+        except AttributeError:
+            logger.warning(
+                "OPC-UA server has no 'DscCmdAuthorityType' enum. Attempting a guess."
+            )
+            return {
+                "NoAuthority": 0,
+                "LMC": 1,
+                "HHP": 2,
+                "EGUI": 3,
+                "Tester": 4,
+            }[user]
+
+    def _create_command_function(
+        self,
+        node: Node,
+        event_loop: asyncio.AbstractEventLoop,
+        node_name: str,
+    ) -> Callable:
+        """
+        Create a command function to execute a method on a specified Node.
+
+        :param node: The Node on which the method will be executed.
+        :type node: asyncua.Node
+        :param event_loop: The asyncio event loop to run the coroutine on.
+        :type event_loop: asyncio.AbstractEventLoop
+        :param node_name: The full name of the Node.
+        :type node_name: str
+        :return: A function that can be used to execute a method on the Node.
+        :rtype: function
+        """
+        call = (
+            asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop)
+            .result()
+            .call_method
+        )
+        read_name = asyncio.run_coroutine_threadsafe(
+            node.read_display_name(), event_loop
+        )
+        uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
+
+        def fn(*args) -> tuple[int, str, list[int | None] | None]:
+            """
+            Execute function with arguments and return tuple with return code/message.
+
+            :param args: Optional positional arguments to pass to the function.
+            :type args: tuple
+
+            :return: A tuple containing the return code (int), return message (str),
+                and a list of other returned values (Any), if any, otherwise None.
+            :rtype: tuple[int, str, list[Any] | None]
+
+            :raises: Any exception raised during the execution of the function will be
+                handled by the function and a tuple with return code -1 and exception
+                message will be returned.
+
+            Note: This function uses asyncio to run the coroutine in a separate thread.
+            """
+            try:
+                cmd_args = (
+                    [self._session_id, *args]
+                    if self._session_id is not None
+                    else [*args]
+                )
+                result: int | list[Any] = asyncio.run_coroutine_threadsafe(
+                    call(uid, *cmd_args), event_loop
+                ).result()
+                if isinstance(result, list):
+                    return_code: int = result.pop(0)
+                    return_vals = result
+                else:
+                    return_code = result
+                    return_vals = None
+                if hasattr(ua, "CmdResponseType") and return_code is not None:
+                    # The asyncua library has a CmdResponseType enum ONLY if the opcua
+                    # server implements the type
+                    # pylint: disable=no-member
+                    return_msg = str(ua.CmdResponseType(return_code).name)
+                else:
+                    return_msg = str(return_code)
+                return (return_code, return_msg, return_vals)
+            except Exception as e:
+                # e.add_note(f'Command: {uid} args: {args}')
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, f"Command: {uid} ({node_name}), args: {args}"),
+                    event_loop,
+                )
+                return -1, f"asyncua exception: {str(e)}", None
+
+        return fn
+
+    def populate_node_dicts(self, plc_only: bool = False) -> None:
         # Create three dicts:
         # nodes, attributes, commands
         # nodes: Contains the entire uasync.Node-tree from and including
@@ -822,7 +821,7 @@ class SCU:
         self.plc_prg = plc_prg
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
-        if self.parameter_ns_idx is not None:
+        if not plc_only and self.parameter_ns_idx is not None:
             parameter = asyncio.run_coroutine_threadsafe(
                 self.connection.nodes.objects.get_child(
                     [f"{self.parameter_ns_idx}:Parameter"]
@@ -840,16 +839,17 @@ class SCU:
             self.parameter = parameter
         # And now create dicts for all nodes of the OPC UA server. This is
         # intended to serve as the API for the Dish LMC.
-        server = self.connection.get_root_node()
-        (
-            self.server_nodes,
-            self.server_nodes_reversed,
-            self.server_attributes,
-            self.server_attributes_reversed,
-            self.server_commands,
-            self.server_commands_reversed,
-        ) = self.generate_node_dicts(server, "Root")
-        self.server = server
+        if not plc_only:
+            server = self.connection.get_root_node()
+            (
+                self.server_nodes,
+                self.server_nodes_reversed,
+                self.server_attributes,
+                self.server_attributes_reversed,
+                self.server_commands,
+                self.server_commands_reversed,
+            ) = self.generate_node_dicts(server, "Root")
+            self.server = server
 
     def generate_node_dicts(self, top_level_node, top_level_node_name: str = None):
         """
@@ -1001,7 +1001,7 @@ class SCU:
             # )
         elif node_class == 4:
             # A command. Add it to the commands dict.
-            commands[node_name] = create_command_function(
+            commands[node_name] = self._create_command_function(
                 node, self.event_loop, node_name
             )
         return nodes, attributes, commands
@@ -1208,7 +1208,7 @@ class SCU:
     # pylint: disable=dangerous-default-value
     def subscribe(
         self,
-        attributes: str | list[str] = OPCUA_ATTRIBUTES,
+        attributes: str | list[str],
         period: int = 100,
         data_queue: queue.Queue = None,
     ) -> int:
