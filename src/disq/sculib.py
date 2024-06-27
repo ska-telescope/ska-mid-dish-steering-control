@@ -29,6 +29,7 @@ import os
 import queue
 import threading
 import time
+from functools import cached_property
 from importlib import resources
 from pathlib import Path
 from typing import Any, Callable
@@ -391,10 +392,9 @@ class SCU:
                 raise e
         logger.info("Populating nodes dicts from server. This can take a while...")
         self.populate_node_dicts(gui_app)
-        logger.info("Initialising sculib done.")
-        # self._user: ua.DscCmdAuthorityType | None = None
         self._user: int | None = None
         self._session_id: ua.UInt16 | None = None
+        logger.info("Initialising sculib done.")
 
     def __del__(self) -> None:
         """
@@ -545,10 +545,8 @@ class SCU:
             _ = asyncio.run_coroutine_threadsafe(
                 connection.load_data_type_definitions(), self.event_loop
             ).result()
-        except Exception:
-            # The CETC simulator V1 returns a faulty DscCmdAuthorityEnumType,
-            # where the entry for 3 has no name.
-            pass
+        except Exception as exc:
+            logger.warning("Exception trying load_data_type_definitions(): %s", exc)
         # Get the namespace index for the PLC's Parameter node
         try:
             self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(
@@ -644,13 +642,13 @@ class SCU:
                 self.convert_user_to_type(user) if isinstance(user, str) else user
             )
             code, msg, vals = self.commands["CommandArbiter.Commands.TakeAuth"](
-                self._user
+                self._user if self.namespace == "CETC54" else ua.UInt16(self._user)
             )
-            if vals is None or (isinstance(vals, list) and vals[0] is None):
+            if code == 10:  # CommandDone
+                self._session_id = ua.UInt16(vals[0])
+            else:
                 self._user = None
                 logger.error("TakeAuth command failed with message '%s'", msg)
-            else:
-                self._session_id = ua.UInt16(vals[0])
         else:
             code = -1
             msg = f"DiSQ already has command authority with user {self._user}"
@@ -666,7 +664,7 @@ class SCU:
         """
         if self._user is not None and self._session_id is not None:
             code, msg, _ = self.commands["CommandArbiter.Commands.ReleaseAuth"](
-                self._user
+                self._user if self.namespace == "CETC54" else ua.UInt16(self._user)
             )
             if code == 10:  # CommandDone
                 self._user = None
@@ -699,6 +697,44 @@ class SCU:
                 "EGUI": 3,
                 "Tester": 4,
             }[user]
+
+    @cached_property
+    def opcua_enum_types(self) -> dict:
+        """
+        Retrieve a dictionary of OPC-UA enum types.
+
+        :return: A dictionary mapping OPC-UA enum type names to their corresponding
+            value. The value being an enumerated type.
+        :rtype: dict
+        :raises AttributeError: If any of the required enum types are not found in the
+            UA namespace.
+        """
+        result = {}
+        missing_types = []
+        for opcua_type in [
+            "AxisStateType",
+            "DscStateType",
+            "StowPinStatusType",
+            "AxisSelectType",
+            "DscCmdAuthorityType",
+            "BandType",
+            "DscTimeSyncSourceType",
+            "InterpolType",
+            "LoadEnumType",
+            "SafetyStateType",
+            "TiltOnType",
+        ]:
+            try:
+                result.update({opcua_type: getattr(ua, opcua_type)})
+            except AttributeError:
+                missing_types.append(opcua_type)
+        if missing_types:
+            logger.warning(
+                "OPC-UA server does not implement the following Enumerated types "
+                "as expected: %s",
+                str(missing_types),
+            )
+        return result
 
     def _create_command_function(
         self,
@@ -746,10 +782,19 @@ class SCU:
             Note: This function uses asyncio to run the coroutine in a separate thread.
             """
             try:
-                cmd_args = (
-                    [self._session_id, *args]
-                    if self._session_id is not None
-                    else [*args]
+                cmd_args = []
+                if self._session_id is not None:
+                    cmd_args = [self._session_id]
+                for arg in args:
+                    if (
+                        self.namespace != "CETC54"
+                        and type(arg) in self.opcua_enum_types.values()
+                    ):
+                        cmd_args.append(ua.UInt16(arg))
+                    else:
+                        cmd_args.append(arg)
+                logger.debug(
+                    "Calling command node '%s' with args list: %s", uid, cmd_args
                 )
                 result: int | list[Any] = asyncio.run_coroutine_threadsafe(
                     call(uid, *cmd_args), event_loop
@@ -1805,7 +1850,7 @@ class SCU:
         for index in range(len(t)):
             row = f"{index:03d}:{t[index]},{az[index]},{el[index]};"
             table += row
-        logger.debug(f"Track table that will be sent to DS:{table}")
+        logger.debug(f"Track table that will be sent to DS: {table}")
         byte_string = table.encode()
         try:
             return self.commands["Tracking.TrackLoadTable"](
@@ -1827,7 +1872,7 @@ class SCU:
         for index in range(0, entries):
             row = f"{t[index]},{az[index]},{el[index]};"
             table += row
-        logger.debug(f"Track table that will be sent to DS:{table}")
+        logger.debug(f"Track table that will be sent to DS: {table}")
         byte_string = table.encode()
         try:
             return self.commands["Tracking.TrackLoadTable"](
