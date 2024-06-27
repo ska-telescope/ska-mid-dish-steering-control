@@ -29,6 +29,7 @@ import os
 import queue
 import threading
 import time
+from enum import Enum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
@@ -364,8 +365,6 @@ class SCU:
             )
         except Exception:
             try:
-                # TODO: why these user/pw?
-                # These appear to NOT be default ones for the CETC54 simulator...
                 user = "LMC"
                 pw = "lmc"
                 if username is not None:
@@ -403,6 +402,7 @@ class SCU:
         This method unsubscribes from all subscriptions, disconnects from the server,
         and stops the event loop if it was started in a separate thread.
         """
+        self.release_authority()
         self.unsubscribe_all()
         self.disconnect()
         if self.event_loop_thread is not None:
@@ -639,10 +639,12 @@ class SCU:
         """
         if self._user is None and self._session_id is None:
             self._user = (
-                self.convert_user_to_type(user) if isinstance(user, str) else user
+                self.convert_enum_to_int("DscCmdAuthorityType", user)
+                if isinstance(user, str)
+                else user
             )
             code, msg, vals = self.commands["CommandArbiter.Commands.TakeAuth"](
-                self._user if self.namespace == "CETC54" else ua.UInt16(self._user)
+                self._user
             )
             if code == 10:  # CommandDone
                 self._session_id = ua.UInt16(vals[0])
@@ -675,28 +677,26 @@ class SCU:
             logger.info(msg)
         return code, msg
 
-    def convert_user_to_type(self, user: str) -> int:
+    def convert_enum_to_int(self, enum_type: str, name: str) -> int | ua.UInt16 | None:
         """
-        Convert user string to DscCmdAuthorityType enum (integer value).
+        Convert the name (string) of the given enumeration type to an integer value.
 
-        :param user: the user to convert to enum
-        :type user: str
-        :return: DscCmdAuthorityType enum integer value
-        :rtype: int
+        :param enum_type: the name of the enumeration type to use.
+        :type enum_type: str
+        :param name: of enum to convert.
+        :type name: str
+        :return: enum integer value, or None if the type does not exist.
+        :rtype: int | None
         """
         try:
-            return ua.DscCmdAuthorityType[user]
+            value = getattr(ua, enum_type)[name]
+            if self.namespace == "CETC54":  # TODO: Remove when simulator is fixed
+                return value
+            integer = value.value if isinstance(value, Enum) else value
+            return ua.UInt16(integer)
         except AttributeError:
-            logger.warning(
-                "OPC-UA server has no 'DscCmdAuthorityType' enum. Attempting a guess."
-            )
-            return {
-                "NoAuthority": 0,
-                "LMC": 1,
-                "HHP": 2,
-                "EGUI": 3,
-                "Tester": 4,
-            }[user]
+            logger.error("OPC-UA server has no '%s' enum!", enum_type)
+            return None
 
     @cached_property
     def opcua_enum_types(self) -> dict:
@@ -711,23 +711,33 @@ class SCU:
         """
         result = {}
         missing_types = []
-        for opcua_type in [
-            "AxisStateType",
-            "DscStateType",
-            "StowPinStatusType",
+        expected_types = [
             "AxisSelectType",
-            "DscCmdAuthorityType",
+            "AxisStateType",
             "BandType",
+            "CmdResponseType",
+            "DscCmdAuthorityType",
+            "DscStateType",
             "DscTimeSyncSourceType",
             "InterpolType",
-            "LoadEnumType",
+            "LoadModeType",
             "SafetyStateType",
+            "StowPinStatusType",
             "TiltOnType",
-        ]:
+        ]
+        for type_name in expected_types:
             try:
-                result.update({opcua_type: getattr(ua, opcua_type)})
+                result.update({type_name: getattr(ua, type_name)})
             except AttributeError:
-                missing_types.append(opcua_type)
+                try:
+                    enum_node = self.connection.get_node(
+                        f"ns={self.ns_idx};s=@{type_name}.EnumValues"
+                    )
+                    enum_dict = self._create_enum_from_node(type_name, enum_node)
+                    result.update({type_name: enum_dict})
+                    setattr(ua, type_name, enum_dict)
+                except (RuntimeError, ValueError):
+                    missing_types.append(type_name)
         if missing_types:
             logger.warning(
                 "OPC-UA server does not implement the following Enumerated types "
@@ -735,6 +745,18 @@ class SCU:
                 str(missing_types),
             )
         return result
+
+    def _create_enum_from_node(self, name: str, node: Node) -> Enum:
+        enum_values = asyncio.run_coroutine_threadsafe(
+            node.get_value(), self.event_loop
+        ).result()
+        if not isinstance(enum_values, list):
+            raise ValueError("Expected a list of EnumValueType")
+        enum_dict = {}
+        for value in enum_values:
+            display_name = value.DisplayName.Text
+            enum_dict[display_name] = value.Value
+        return Enum(name, enum_dict)
 
     def _create_command_function(
         self,
@@ -782,17 +804,11 @@ class SCU:
             Note: This function uses asyncio to run the coroutine in a separate thread.
             """
             try:
-                cmd_args = []
-                if self._session_id is not None:
-                    cmd_args = [self._session_id]
-                for arg in args:
-                    if (
-                        self.namespace != "CETC54"
-                        and type(arg) in self.opcua_enum_types.values()
-                    ):
-                        cmd_args.append(ua.UInt16(arg))
-                    else:
-                        cmd_args.append(arg)
+                cmd_args = (
+                    [self._session_id, *args]
+                    if self._session_id is not None
+                    else [*args]
+                )
                 logger.debug(
                     "Calling command node '%s' with args list: %s", uid, cmd_args
                 )
@@ -1382,10 +1398,10 @@ class SCU:
         # pylint: disable=no-member
         positions = self.load_track_table_file(file_name)
         # Reset the currently loaded track table.
-        self.load_program_track(ua.LoadEnumType.Reset, 0, [0.0], [0.0], [0.0])
+        self.load_program_track(ua.LoadModeType.Reset, 0, [0.0], [0.0], [0.0])
         # Submit the new track table.
         self.load_program_track(
-            ua.LoadEnumType.New,
+            ua.LoadModeType.New,
             len(positions),
             positions[:, 0],
             positions[:, 1],
