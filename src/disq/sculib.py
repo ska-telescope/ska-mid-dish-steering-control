@@ -1578,7 +1578,7 @@ class SCU:
             for index, field in enumerate(dt_node_def.Fields)
         ]
 
-    def get_node_descriptions(self, node_list: list[str]) -> tuple[str, str | None]:
+    def get_node_descriptions(self, node_list: list[str]) -> list[tuple[str, str]]:
         """
         Get the descriptions of a list of nodes.
 
@@ -1590,7 +1590,7 @@ class SCU:
 
         async def get_descriptions() -> list[str]:
             coroutines = [
-                self.nodes[node_name].read_description() for node_name in node_list
+                self.nodes[nm].read_description() for nm in node_list  # type: ignore
             ]
             return await asyncio.gather(*coroutines)
 
@@ -1598,7 +1598,7 @@ class SCU:
             get_descriptions(), self.event_loop
         ).result()
         # Convert the descriptions to text (or None)
-        descriptions = [desc.Text for desc in descriptions]
+        descriptions = [desc.Text for desc in descriptions]  # type: ignore
         result = list(zip(node_list, descriptions))
         return result
 
