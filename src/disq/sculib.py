@@ -1578,6 +1578,30 @@ class SCU:
             for index, field in enumerate(dt_node_def.Fields)
         ]
 
+    def get_node_descriptions(self, node_list: list[str]) -> tuple[str, str | None]:
+        """
+        Get the descriptions of a list of nodes.
+
+        :param node_list: A list of node names.
+        :type node_list: list[str]
+        :return: A list of tuples containing the node names and their descriptions.
+        :rtype: tuple(str, str|None)
+        """
+
+        async def get_descriptions() -> list[str]:
+            coroutines = [
+                self.nodes[node_name].read_description() for node_name in node_list
+            ]
+            return await asyncio.gather(*coroutines)
+
+        descriptions = asyncio.run_coroutine_threadsafe(
+            get_descriptions(), self.event_loop
+        ).result()
+        # Convert the descriptions to text (or None)
+        descriptions = [desc.Text for desc in descriptions]
+        result = list(zip(node_list, descriptions))
+        return result
+
     # pylint: disable=dangerous-default-value
     def subscribe(
         self,
