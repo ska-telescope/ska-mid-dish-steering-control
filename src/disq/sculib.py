@@ -751,7 +751,7 @@ class SCU:
             node.get_value(), self.event_loop
         ).result()
         if not isinstance(enum_values, list):
-            raise ValueError("Expected a list of EnumValueType")
+            raise ValueError(f"Expected a list of EnumValueType for node '{name}'.")
         enum_dict = {}
         for value in enum_values:
             display_name = value.DisplayName.Text
