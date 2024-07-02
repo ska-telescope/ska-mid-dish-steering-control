@@ -26,7 +26,6 @@ import enum
 import json
 import logging
 import logging.config
-import os
 import queue
 import threading
 import time
@@ -59,14 +58,14 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
     :type default_log_level: int
     :raises ValueError: If an error occurs while configuring logging from the file.
     """
-    if os.path.exists("disq_logging_config.yaml"):
+    if Path("disq_logging_config.yaml").exists():
         disq_log_config_file: resources.Traversable | str = "disq_logging_config.yaml"
     else:
         disq_log_config_file = (
             resources.files(__package__) / "default_logging_config.yaml"
         )
     config = None
-    if os.path.exists(disq_log_config_file):
+    if Path(disq_log_config_file).exists():
         with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
             try:
                 config = yaml.safe_load(f.read())
@@ -910,7 +909,7 @@ class SCU:
             or empty dict if the file does not exists.
         :rtype: dict
         """
-        if os.path.exists(file_path):
+        if Path(file_path).exists():
             with open(file_path, "r", encoding="UTF-8") as file:
                 try:
                     return json.load(file)
@@ -969,6 +968,7 @@ class SCU:
                 "node_ids": node_ids,
                 "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
+            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w+", encoding="UTF-8") as file:
                 json.dump(cached_data, file, indent=4, sort_keys=True)
 
