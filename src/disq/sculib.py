@@ -34,7 +34,7 @@ from enum import Enum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 import numpy
 import yaml
@@ -247,6 +247,13 @@ class SubscriptionHandler:
         self.subscription_queue.put(value_for_queue, block=True, timeout=0.1)
 
 
+class CachedNodesDict(TypedDict):
+    """Cached nodes dictionary type."""
+
+    node_ids: dict[str, tuple[str, int]]
+    timestamp: str
+
+
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
 class SCU:
     """
@@ -389,7 +396,6 @@ class SCU:
                     pw=pw,
                 )
             except Exception as e:
-                # e.add_note('Cannot connect to the OPC UA server. Please '
                 msg = (
                     "Cannot connect to the OPC UA server. Please "
                     "check the connection parameters that were "
@@ -397,6 +403,12 @@ class SCU:
                 )
                 logger.error("%s - %s", msg, e)
                 raise e
+
+        if self.server_version is None:
+            self._server_str_id = f"{self._server_url} - version unknown"
+        else:
+            self._server_str_id = f"{self._server_url} - v{self.server_version}"
+
         self.populate_node_dicts(gui_app, use_nodes_cache)
         self._user: int | None = None
         self._session_id: ua.UInt16 | None = None
@@ -417,6 +429,48 @@ class SCU:
             self.event_loop.call_soon_threadsafe(self.event_loop.stop)
             # Join the event loop thread once it is done processing tasks.
             self.event_loop_thread.join()
+
+    @cached_property
+    def server_version(self) -> str | None:
+        """
+        The software/firmware version of the server that SCU is connected to.
+
+        :return: The version of the server, or None if the server version info could
+            not be read successfully.
+        :rtype: str
+        """
+        try:
+            version_node = asyncio.run_coroutine_threadsafe(
+                self.connection.nodes.objects.get_child(
+                    [
+                        f"{self.ns_idx}:Logic",
+                        f"{self.ns_idx}:Application",
+                        f"{self.ns_idx}:PLC_PRG",
+                        f"{self.ns_idx}:Management",
+                        f"{self.ns_idx}:NamePlate",
+                        f"{self.ns_idx}:DscSoftwareVersion",
+                    ]
+                ),
+                self.event_loop,
+            ).result()
+            server_version: str = asyncio.run_coroutine_threadsafe(
+                version_node.get_value(), self.event_loop
+            ).result()
+        except Exception as e:
+            msg = "Failed to read value of DscSoftwareVersion attribute."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            server_version = None
+        return server_version
+
+    @property
+    def plc_prg_nodes_timestamp(self) -> str:
+        """
+        Generation timestamp of the PLC_PRG Node tree.
+
+        :return: timestamp in 'yyyy-mm-dd hh:mm:ss' string format.
+        :rtype: str
+        """
+        return self._plc_prg_nodes_timestamp
 
     def run_event_loop(
         self,
@@ -539,15 +593,15 @@ class SCU:
         :type pw: str
         :raises: Exception if an error occurs during the connection process.
         """
-        opc_ua_server = f"opc.tcp://{host}:{port}{endpoint}"
-        logger.info("Connecting to: %s", opc_ua_server)
-        connection = Client(opc_ua_server, timeout)
+        server_url = f"opc.tcp://{host}:{port}{endpoint}"
+        logger.info("Connecting to: %s", server_url)
+        connection = Client(server_url, timeout)
         if encryption:
             self.set_up_encryption(connection, user, pw)
         _ = asyncio.run_coroutine_threadsafe(
             connection.connect(), self.event_loop
         ).result()
-        self.opc_ua_server = opc_ua_server
+        self._server_url = server_url
         try:
             _ = asyncio.run_coroutine_threadsafe(
                 connection.load_data_type_definitions(), self.event_loop
@@ -846,14 +900,14 @@ class SCU:
 
         return fn
 
-    def _load_json_file(self, file_path: str) -> dict | None:
+    def _load_json_file(self, file_path: str) -> dict[str, CachedNodesDict]:
         """
         Load JSON file.
 
         :param file_path: of JSON file to load.
         :type file_path: str
         :return: decoded JSON file contents as nested dictionary,
-            or None if file does not exists.
+            or empty dict if the file does not exists.
         :rtype: dict
         """
         if os.path.exists(file_path):
@@ -864,7 +918,7 @@ class SCU:
                     logger.warning("The file %s is not valid JSON.", file_path)
         else:
             logger.debug("The file %s does not exist.", file_path)
-        return None
+        return {}
 
     def populate_node_dicts(
         self, plc_only: bool = False, use_cache: bool = False
@@ -911,10 +965,10 @@ class SCU:
                 except TypeError as exc:
                     logger.debug("TypeError with dict value %s: %s", tup, exc)
             cached_data = self._load_json_file(file_path)
-            if cached_data:
-                cached_data[self.opc_ua_server] = node_ids
-            else:
-                cached_data = {self.opc_ua_server: node_ids}
+            cached_data[self._server_str_id] = {
+                "node_ids": node_ids,
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
             with open(file_path, "w+", encoding="UTF-8") as file:
                 json.dump(cached_data, file, indent=4, sort_keys=True)
 
@@ -925,7 +979,7 @@ class SCU:
             if use_cache
             else None
         )
-        cached_nodes = cache.get(self.opc_ua_server) if cache is not None else None
+        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
 
         # Check for existing Nodes IDs cache
         if cached_nodes:
@@ -933,7 +987,8 @@ class SCU:
                 self.nodes,
                 self.attributes,
                 self.commands,
-            ) = self.generate_node_dicts_from_cache(cached_nodes)
+            ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"])
+            self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
         else:
             plc_prg = asyncio.run_coroutine_threadsafe(
                 self.connection.nodes.objects.get_child(
@@ -952,6 +1007,9 @@ class SCU:
             ) = self.generate_node_dicts_from_server(plc_prg, top_node_name)
             self.plc_prg = plc_prg
             cache_node_ids(f"{cache_dir}{top_node_name}.json", self.nodes)
+            self._plc_prg_nodes_timestamp = datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
         self.nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
 
         # We also want the PLC's parameters for the drives and the PLC program.
@@ -963,13 +1021,13 @@ class SCU:
                 if use_cache
                 else None
             )
-            cached_nodes = cache.get(self.opc_ua_server) if cache is not None else None
+            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
             if cached_nodes:
                 (
                     self.parameter_nodes,
                     self.parameter_attributes,
                     self.parameter_commands,
-                ) = self.generate_node_dicts_from_cache(cached_nodes)
+                ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"])
             else:
                 parameter = asyncio.run_coroutine_threadsafe(
                     self.connection.nodes.objects.get_child(
@@ -994,13 +1052,13 @@ class SCU:
                 if use_cache
                 else None
             )
-            cached_nodes = cache.get(self.opc_ua_server) if cache is not None else None
+            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
             if cached_nodes:
                 (
                     self.server_nodes,
                     self.server_attributes,
                     self.server_commands,
-                ) = self.generate_node_dicts_from_cache(cached_nodes)
+                ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"])
             else:
                 server = self.connection.get_root_node()
                 (
