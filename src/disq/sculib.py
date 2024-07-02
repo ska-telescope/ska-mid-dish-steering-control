@@ -33,7 +33,7 @@ from enum import Enum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable, Final, TypedDict
 
 import numpy
 import yaml
@@ -41,12 +41,15 @@ from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
+from platformdirs import user_cache_dir
 
 logger = logging.getLogger("sculib")
 
 NodeDict = dict[str, tuple[Node, int]]
 AttrDict = dict[str, object]
 CmdDict = dict[str, Callable]
+
+USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
 
 
 def configure_logging(default_log_level: int = logging.INFO) -> None:
@@ -899,17 +902,17 @@ class SCU:
 
         return fn
 
-    def _load_json_file(self, file_path: str) -> dict[str, CachedNodesDict]:
+    def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
         """
         Load JSON file.
 
         :param file_path: of JSON file to load.
-        :type file_path: str
+        :type file_path: Path
         :return: decoded JSON file contents as nested dictionary,
             or empty dict if the file does not exists.
         :rtype: dict
         """
-        if Path(file_path).exists():
+        if file_path.exists():
             with open(file_path, "r", encoding="UTF-8") as file:
                 try:
                     return json.load(file)
@@ -918,6 +921,36 @@ class SCU:
         else:
             logger.debug("The file %s does not exist.", file_path)
         return {}
+
+    def _cache_node_ids(self, file_path: Path, nodes: NodeDict) -> None:
+        """
+        Cache Node IDs.
+
+        Create a dictionary of Node names with their unique Node ID and node class
+        and write it to a new or existing JSON file with the OPC-UA server address
+        as key.
+
+        :param file_path: of JSON file to load.
+        :type file_path: Path
+        :param nodes: dictionary of Nodes to cache.
+        :type nodes: NodeDict
+        """
+        node_ids = {}
+        for key, tup in nodes.items():
+            try:
+                node, node_class = tup
+                if key != "":
+                    node_ids[key] = (node.nodeid.to_string(), node_class)
+            except TypeError as exc:
+                logger.debug("TypeError with dict value %s: %s", tup, exc)
+        cached_data = self._load_json_file(file_path)
+        cached_data[self._server_str_id] = {
+            "node_ids": node_ids,
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w+", encoding="UTF-8") as file:
+            json.dump(cached_data, file, indent=4, sort_keys=True)
 
     def populate_node_dicts(
         self, plc_only: bool = False, use_cache: bool = False
@@ -941,44 +974,9 @@ class SCU:
 
         This method may raise exceptions related to asyncio operations.
         """
-
-        def cache_node_ids(file_path: str, nodes: NodeDict):
-            """
-            Cache Node IDs.
-
-            Create a dictionary of Node names with their unique Node ID and node class
-            and write it to a new or existing JSON file with the OPC-UA server address
-            as key.
-
-            :param file_path: of JSON file to load.
-            :type file_path: str
-            :param nodes: dictionary of Nodes to cache.
-            :type nodes: NodeDict
-            """
-            node_ids = {}
-            for key, tup in nodes.items():
-                try:
-                    node, node_class = tup
-                    if key != "":
-                        node_ids[key] = (node.nodeid.to_string(), node_class)
-                except TypeError as exc:
-                    logger.debug("TypeError with dict value %s: %s", tup, exc)
-            cached_data = self._load_json_file(file_path)
-            cached_data[self._server_str_id] = {
-                "node_ids": node_ids,
-                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(file_path, "w+", encoding="UTF-8") as file:
-                json.dump(cached_data, file, indent=4, sort_keys=True)
-
-        cache_dir = ".nodes_cache/"
         top_node_name = "PLC_PRG"
-        cache = (
-            self._load_json_file(f"{cache_dir}{top_node_name}.json")
-            if use_cache
-            else None
-        )
+        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
+        cache = self._load_json_file(cache_file_path) if use_cache else None
         cached_nodes = cache.get(self._server_str_id) if cache is not None else None
 
         # Check for existing Nodes IDs cache
@@ -1006,7 +1004,7 @@ class SCU:
                 self.commands,
             ) = self.generate_node_dicts_from_server(plc_prg, top_node_name)
             self.plc_prg = plc_prg
-            cache_node_ids(f"{cache_dir}{top_node_name}.json", self.nodes)
+            self._cache_node_ids(cache_file_path, self.nodes)
             self._plc_prg_nodes_timestamp = datetime.datetime.now().strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
@@ -1015,12 +1013,9 @@ class SCU:
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         top_node_name = "Parameter"
+        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
         if not plc_only and self.parameter_ns_idx is not None:
-            cache = (
-                self._load_json_file(f"{cache_dir}{top_node_name}.json")
-                if use_cache
-                else None
-            )
+            cache = self._load_json_file(cache_file_path) if use_cache else None
             cached_nodes = cache.get(self._server_str_id) if cache is not None else None
             if cached_nodes:
                 (
@@ -1041,17 +1036,14 @@ class SCU:
                     self.parameter_commands,
                 ) = self.generate_node_dicts_from_server(parameter, top_node_name)
                 self.parameter = parameter
-                cache_node_ids(f"{cache_dir}{top_node_name}.json", self.parameter_nodes)
+                self._cache_node_ids(cache_file_path, self.parameter_nodes)
 
         # And now create dicts for all nodes of the OPC UA server. This is
         # intended to serve as the API for the Dish LMC.
         top_node_name = "Root"
+        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
         if not plc_only:
-            cache = (
-                self._load_json_file(f"{cache_dir}{top_node_name}.json")
-                if use_cache
-                else None
-            )
+            cache = self._load_json_file(cache_file_path) if use_cache else None
             cached_nodes = cache.get(self._server_str_id) if cache is not None else None
             if cached_nodes:
                 (
@@ -1067,7 +1059,7 @@ class SCU:
                     self.server_commands,
                 ) = self.generate_node_dicts_from_server(server, top_node_name)
                 self.server = server
-                cache_node_ids(f"{cache_dir}{top_node_name}.json", self.server_nodes)
+                self._cache_node_ids(cache_file_path, self.server_nodes)
 
     def generate_node_dicts_from_cache(
         self, cache_dict: dict[str, tuple[str, int]]
@@ -1078,7 +1070,7 @@ class SCU:
         :return: A tuple containing dictionaries for nodes, attributes and commands.
         :rtype: tuple
         """
-        logger.info("Generating node dicts from existing cache.")
+        logger.info("Generating node dicts from existing cache in %s", USER_CACHE_DIR)
         nodes = {}
         attributes = {}
         commands = {}
