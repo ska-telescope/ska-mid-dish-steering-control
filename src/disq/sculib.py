@@ -27,6 +27,7 @@ import json
 import logging
 import logging.config
 import queue
+import socket
 import threading
 import time
 from enum import Enum
@@ -322,7 +323,7 @@ class SCU:
     ```
     """  # noqa: RST201,RST203,RST214,RST301
 
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments,too-many-locals
     def __init__(
         self,
         host: str = "localhost",
@@ -335,6 +336,7 @@ class SCU:
         eventloop: asyncio.AbstractEventLoop | None = None,
         gui_app: bool = False,
         use_nodes_cache: bool = False,
+        app_name: str = "SKA-Mid Dish SCU lib",
     ) -> None:
         """
         Initializes the sculib with the provided parameters.
@@ -359,6 +361,8 @@ class SCU:
         :type gui_app: bool
         :param use_nodes_cache: Whether to use any existing caches of node IDs.
         :type use_nodes_cache: bool
+        :param app_name: application name for OPC UA client description.
+        :type app_name: str
         :raises Exception: If connection to OPC UA server fails.
         """
         logger.info("Initialising sculib")
@@ -367,6 +371,7 @@ class SCU:
         self.endpoint = endpoint
         self.namespace = namespace
         self.timeout = timeout
+        self._app_name = app_name
         self.event_loop_thread: threading.Thread | None = None
         self.subscription_handler = None
         self.subscriptions = {}
@@ -598,6 +603,12 @@ class SCU:
         server_url = f"opc.tcp://{host}:{port}{endpoint}"
         logger.info("Connecting to: %s", server_url)
         connection = Client(server_url, timeout)
+        hostname = socket.gethostname()
+        # Set the ClientDescription fields
+        connection.application_uri = f"urn:{hostname}:{self._app_name.replace(' ', '')}"
+        connection.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
+        connection.name = f"{self._app_name} @{hostname}"
+        connection.description = f"{self._app_name} @{hostname}"
         if encryption:
             self.set_up_encryption(connection, user, pw)
         _ = asyncio.run_coroutine_threadsafe(
