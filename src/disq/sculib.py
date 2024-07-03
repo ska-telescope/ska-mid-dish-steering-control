@@ -51,6 +51,7 @@ AttrDict = dict[str, object]
 CmdDict = dict[str, Callable]
 
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
+# USER_CACHE_DIR: Final = Path(".nodes_cache")
 
 
 def configure_logging(default_log_level: int = logging.INFO) -> None:
@@ -1455,7 +1456,7 @@ class SCU:
         attributes: str | list[str],
         period: int = 100,
         data_queue: queue.Queue = None,
-    ) -> int:
+    ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
 
@@ -1467,8 +1468,8 @@ class SCU:
         :param data_queue: A queue to store the subscribed attribute data. If None, uses
             the default subscription queue.
         :type data_queue: queue.Queue
-        :return: A unique identifier for the subscription.
-        :rtype: int
+        :return: unique identifier for the subscription and lists of missing/bad nodes.
+        :rtype: tuple[int, list, list]
         """
         if data_queue is None:
             data_queue = self.subscription_queue
@@ -1477,33 +1478,44 @@ class SCU:
             attributes = [
                 attributes,
             ]
-        nodes = []
-        invalid_attributes = []
+        nodes: set[Node] = set()
+        missing_nodes = []
         for attribute in attributes:
             if attribute in self.nodes:
-                nodes.append(self.nodes[attribute][0])
+                nodes.add(self.nodes[attribute][0])
             else:
-                invalid_attributes.append(attribute)
-        if len(invalid_attributes) > 0:
+                missing_nodes.append(attribute)
+        if len(missing_nodes) > 0:
             logger.warning(
                 "The following OPC-UA attributes not found in nodes dict and not "
                 "subscribed for event updates: %s",
-                invalid_attributes,
+                missing_nodes,
             )
         subscription = asyncio.run_coroutine_threadsafe(
             self.connection.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
-        handle = asyncio.run_coroutine_threadsafe(
-            subscription.subscribe_data_change(nodes), self.event_loop
-        ).result()
+        handles = []
+        bad_nodes = set()
+        for node in nodes:
+            try:
+                handle = asyncio.run_coroutine_threadsafe(
+                    subscription.subscribe_data_change(node), self.event_loop
+                ).result()
+                handles.append(handle)
+            except Exception as e:
+                msg = f"Failed to subscribe to node '{node.nodeid.to_string()}'"
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), self.event_loop
+                )
+                bad_nodes.add(node)
         uid = time.monotonic_ns()
         self.subscriptions[uid] = {
-            "handle": handle,
-            "nodes": nodes,
+            "handles": handles,
+            "nodes": nodes - bad_nodes,
             "subscription": subscription,
         }
-        return uid
+        return uid, missing_nodes, list(bad_nodes)
 
     def unsubscribe(self, uid: int) -> None:
         """
