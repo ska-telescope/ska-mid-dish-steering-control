@@ -32,7 +32,7 @@ import threading
 import time
 from enum import Enum
 from functools import cached_property
-from importlib import resources
+from importlib import metadata, resources
 from pathlib import Path
 from typing import Any, Callable, Final, TypedDict
 
@@ -50,8 +50,8 @@ NodeDict = dict[str, tuple[Node, int]]
 AttrDict = dict[str, object]
 CmdDict = dict[str, Callable]
 
+PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
-# USER_CACHE_DIR: Final = Path(".nodes_cache")
 
 
 def configure_logging(default_log_level: int = logging.INFO) -> None:
@@ -337,7 +337,7 @@ class SCU:
         eventloop: asyncio.AbstractEventLoop | None = None,
         gui_app: bool = False,
         use_nodes_cache: bool = False,
-        app_name: str = "SKA-Mid Dish SCU lib",
+        app_name: str = f"DiSQ.sculib v{PACKAGE_VERSION}",
     ) -> None:
         """
         Initializes the sculib with the provided parameters.
