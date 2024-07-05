@@ -606,7 +606,9 @@ class SCU:
         connection = Client(server_url, timeout)
         hostname = socket.gethostname()
         # Set the ClientDescription fields
-        connection.application_uri = f"urn:{hostname}:{self._app_name.replace(' ', '')}"
+        connection.application_uri = (
+            f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
+        )
         connection.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
         connection.name = f"{self._app_name} @{hostname}"
         connection.description = f"{self._app_name} @{hostname}"
