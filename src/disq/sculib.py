@@ -997,7 +997,9 @@ class SCU:
                 self.nodes,
                 self.attributes,
                 self.commands,
-            ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"])
+            ) = self.generate_node_dicts_from_cache(
+                cached_nodes["node_ids"], top_node_name
+            )
             self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
         else:
             plc_prg = asyncio.run_coroutine_threadsafe(
@@ -1034,7 +1036,9 @@ class SCU:
                     self.parameter_nodes,
                     self.parameter_attributes,
                     self.parameter_commands,
-                ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"])
+                ) = self.generate_node_dicts_from_cache(
+                    cached_nodes["node_ids"], top_node_name
+                )
             else:
                 parameter = asyncio.run_coroutine_threadsafe(
                     self.connection.nodes.objects.get_child(
@@ -1062,7 +1066,9 @@ class SCU:
                     self.server_nodes,
                     self.server_attributes,
                     self.server_commands,
-                ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"])
+                ) = self.generate_node_dicts_from_cache(
+                    cached_nodes["node_ids"], top_node_name
+                )
             else:
                 server = self.connection.get_root_node()
                 (
@@ -1074,15 +1080,21 @@ class SCU:
                 self._cache_node_ids(cache_file_path, self.server_nodes)
 
     def generate_node_dicts_from_cache(
-        self, cache_dict: dict[str, tuple[str, int]]
+        self, cache_dict: dict[str, tuple[str, int]], top_level_node_name: str
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
         Generate dicts for nodes, attributes, and commands from a cache.
 
+        :param top_level_node_name: Name of the top-level node.
+        :type top_level_node_name: str
         :return: A tuple containing dictionaries for nodes, attributes and commands.
         :rtype: tuple
         """
-        logger.info("Generating node dicts from existing cache in %s", USER_CACHE_DIR)
+        logger.info(
+            "Generating dicts of '%s' node's tree from existing cache in %s",
+            top_level_node_name,
+            USER_CACHE_DIR,
+        )
         nodes = {}
         attributes = {}
         commands = {}
@@ -1107,7 +1119,7 @@ class SCU:
         )
 
     def generate_node_dicts_from_server(
-        self, top_level_node, top_level_node_name: str = None
+        self, top_level_node: Node, top_level_node_name: str
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
         Generate dicts for nodes, attributes, and commands for a given top-level node.
@@ -1120,16 +1132,14 @@ class SCU:
         The dictionaries contain mappings of keys to nodes, attributes, and commands.
 
         :param top_level_node: The top-level node for which to generate dictionaries.
-        :type top_level_node: Any
-
-        :param top_level_node_name: Optional name for the top-level node. Default None.
+        :type top_level_node: Node
+        :param top_level_node_name: Name of the top-level node.
         :type top_level_node_name: str
-
         :return: A tuple containing dictionaries for nodes, attributes, and commands.
         :rtype: tuple
         """
         logger.info(
-            "Generating dicts of %s node's tree from server. This can take a while...",
+            "Generating dicts of '%s' node's tree from server. It may take a while...",
             top_level_node_name,
         )
         nodes, attributes, commands = self.get_sub_nodes(top_level_node)
