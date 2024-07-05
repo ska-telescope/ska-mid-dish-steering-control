@@ -338,8 +338,8 @@ class SCU:
         self,
         host: str = "localhost",
         port: int = 4840,
-        endpoint: str = "/OPCUA/SimpleServer",
-        namespace: str = "CETC54",
+        endpoint: str = "",
+        namespace: str = "",
         username: str | None = None,
         password: str | None = None,
         timeout: float = 10.0,
@@ -355,9 +355,9 @@ class SCU:
         :type host: str
         :param port: The port number of the server. Default is 4840.
         :type port: int
-        :param endpoint: The endpoint on the server. Default is '/OPCUA/SimpleServer'.
+        :param endpoint: The endpoint on the server. Default is ''.
         :type endpoint: str
-        :param namespace: The namespace for the server. Default is 'CETC54'.
+        :param namespace: The namespace for the server. Default is ''.
         :type namespace: str
         :param username: The username for authentication. Default is None.
         :type username: str | None
@@ -380,6 +380,8 @@ class SCU:
         self.port = port
         self.endpoint = endpoint
         self.namespace = namespace
+        self.username = username
+        self.password = password
         self.timeout = timeout
         self._app_name = app_name
         self.event_loop_thread: threading.Thread | None = None
@@ -387,39 +389,20 @@ class SCU:
         self.subscriptions = {}
         self.subscription_queue = queue.Queue()
         if eventloop is None:
-            self.create_and_start_asyncio_event_loop()
+            self._create_and_start_asyncio_event_loop()
         else:
             self.event_loop = eventloop
         logger.info("Event loop: %s", self.event_loop)
         try:
-            self.connection = self.connect(
-                self.host, self.port, self.endpoint, self.timeout, encryption=False
+            self.client = self.connect()
+        except Exception as e:
+            msg = (
+                "Cannot connect to the OPC UA server. Please "
+                "check the connection parameters that were "
+                "passed to instantiate the sculib!"
             )
-        except Exception:
-            try:
-                user = "LMC"
-                pw = "lmc"
-                if username is not None:
-                    user = username
-                if password is not None:
-                    pw = password
-                self.connection = self.connect(
-                    self.host,
-                    self.port,
-                    self.endpoint,
-                    self.timeout,
-                    encryption=True,
-                    user=user,
-                    pw=pw,
-                )
-            except Exception as e:
-                msg = (
-                    "Cannot connect to the OPC UA server. Please "
-                    "check the connection parameters that were "
-                    "passed to instantiate the sculib!"
-                )
-                logger.error("%s - %s", msg, e)
-                raise e
+            logger.error("%s - %s", msg, e)
+            raise e
 
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
@@ -458,7 +441,7 @@ class SCU:
         """
         try:
             version_node = asyncio.run_coroutine_threadsafe(
-                self.connection.nodes.objects.get_child(
+                self.client.nodes.objects.get_child(
                     [
                         f"{self.ns_idx}:Logic",
                         f"{self.ns_idx}:Application",
@@ -511,7 +494,7 @@ class SCU:
         thread_started_event.set()  # Signal that the event loop thread has started
         event_loop.run_forever()
 
-    def create_and_start_asyncio_event_loop(self) -> None:
+    def _create_and_start_asyncio_event_loop(self) -> None:
         """
         Create and start an asyncio event loop in a separate thread.
 
@@ -529,15 +512,15 @@ class SCU:
         self.event_loop_thread.start()
         thread_started_event.wait(5.0)  # Wait for the event loop thread to start
 
-    def set_up_encryption(self, connection, user: str, pw: str) -> None:
+    def set_up_encryption(self, client: Client, user: str, pw: str) -> None:
         """
-        Set up encryption for the connection with the given user credentials.
+        Set up encryption for the client with the given user credentials.
 
-        :param connection: The connection object to set up encryption for.
-        :type connection: object
-        :param user: The username for the connection.
+        :param client: The client to set up encryption for.
+        :type client: Client
+        :param user: The username for the server.
         :type user: str
-        :param pw: The password for the connection.
+        :param pw: The password for the server.
         :type pw: str
         """
         # this is generated if it does not exist
@@ -548,15 +531,14 @@ class SCU:
         opcua_server_cert = Path(
             str(resources.files(__package__) / "certs/SimpleServer_2048.der")
         )
-        connection.set_user(user)
-        connection.set_password(pw)
+        client.set_user(user)
+        client.set_password(pw)
 
-        client_app_uri = "urn:freeopcua:client"
         _ = asyncio.run_coroutine_threadsafe(
             setup_self_signed_certificate(
                 key_file=opcua_client_key,
                 cert_file=opcua_client_cert,
-                app_uri=client_app_uri,
+                app_uri=client.application_uri,
                 host_name="localhost",
                 cert_use=[ExtendedKeyUsageOID.CLIENT_AUTH],
                 subject_attrs={
@@ -569,7 +551,7 @@ class SCU:
             self.event_loop,
         ).result()
         _ = asyncio.run_coroutine_threadsafe(
-            connection.set_security(
+            client.set_security(
                 SecurityPolicyBasic256,
                 certificate=str(opcua_client_cert),
                 private_key=str(opcua_client_key),
@@ -580,63 +562,35 @@ class SCU:
         ).result()
 
     # pylint: disable=too-many-arguments
-    def connect(
-        self,
-        host: str,
-        port: int,
-        endpoint: str,
-        timeout: float,
-        encryption: bool = True,
-        user: str = None,
-        pw: str = None,
-    ) -> Client:
+    def connect(self) -> Client:
         """
         Connect to an OPC UA server.
 
-        :param host: The host IP address or hostname of the OPC UA server.
-        :type host: str
-        :param port: The port number of the OPC UA server.
-        :type port: int
-        :param endpoint: The endpoint path of the OPC UA server.
-        :type endpoint: str
-        :param timeout: The timeout for the connection in seconds.
-        :type timeout: float
-        :param encryption: Flag indicating whether encryption is enabled (default is
-            True).
-        :type encryption: bool
-        :param user: Optional username for authentication.
-        :type user: str
-        :param pw: Optional password for authentication.
-        :type pw: str
         :raises: Exception if an error occurs during the connection process.
         """
-        server_url = f"opc.tcp://{host}:{port}{endpoint}"
+        server_url = f"opc.tcp://{self.host}:{self.port}{self.endpoint}"
         logger.info("Connecting to: %s", server_url)
-        connection = Client(server_url, timeout)
+        client = Client(server_url, self.timeout)
         hostname = socket.gethostname()
         # Set the ClientDescription fields
-        connection.application_uri = (
-            f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
-        )
-        connection.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
-        connection.name = f"{self._app_name} @{hostname}"
-        connection.description = f"{self._app_name} @{hostname}"
-        if encryption:
-            self.set_up_encryption(connection, user, pw)
-        _ = asyncio.run_coroutine_threadsafe(
-            connection.connect(), self.event_loop
-        ).result()
+        client.application_uri = f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
+        client.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
+        client.name = f"{self._app_name} @{hostname}"
+        client.description = f"{self._app_name} @{hostname}"
+        if self.username is not None and self.password is not None:
+            self.set_up_encryption(client, self.username, self.password)
+        _ = asyncio.run_coroutine_threadsafe(client.connect(), self.event_loop).result()
         self._server_url = server_url
         try:
             _ = asyncio.run_coroutine_threadsafe(
-                connection.load_data_type_definitions(), self.event_loop
+                client.load_data_type_definitions(), self.event_loop
             ).result()
         except Exception as exc:
             logger.warning("Exception trying load_data_type_definitions(): %s", exc)
         # Get the namespace index for the PLC's Parameter node
         try:
             self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(
-                connection.get_namespace_index(
+                client.get_namespace_index(
                     "http://boschrexroth.com/OpcUa/Parameter/Objects/"
                 ),
                 self.event_loop,
@@ -652,9 +606,9 @@ class SCU:
             logger.warning(message)
 
         try:
-            if self.namespace != "" and endpoint != "":
+            if self.namespace != "" and self.endpoint != "":
                 self.ns_idx = asyncio.run_coroutine_threadsafe(
-                    connection.get_namespace_index(self.namespace), self.event_loop
+                    client.get_namespace_index(self.namespace), self.event_loop
                 ).result()
             else:
                 # Force namespace index for first physical controller
@@ -663,47 +617,44 @@ class SCU:
             namespaces = None
             try:
                 namespaces = asyncio.run_coroutine_threadsafe(
-                    connection.get_namespace_array(), self.event_loop
+                    client.get_namespace_array(), self.event_loop
                 ).result()
             except Exception:
                 pass
             try:
-                self.disconnect(connection)
+                self.disconnect(client)
             except Exception:
                 pass
             message = (
                 "*** Exception caught while trying to access the requested "
-                f"namespace '{self.namespace}' on the OPC UA server. Will NOT continue "
-                "with the normal operation but list the available namespaces here for "
+                f"namespace '{self.namespace}' on the OPC UA server. Will NOT continue"
+                " with the normal operation but list the available namespaces here for "
                 f"future reference:\n{namespaces}"
             )
             logger.error(message)
             # e.add_note(message)
             raise e
-        return connection
+        return client
 
-    def disconnect(self, connection=None) -> None:
+    def disconnect(self, client: Client | None = None) -> None:
         """
-        Disconnect from a connection.
+        Disconnect a client connection.
 
-        :param connection: The connection to disconnect from. If None, disconnect from
-            self.connection.
-        :type connection: object
+        :param client: The client to disconnect. If None, disconnect self.client.
+        :type client: Client
         """
-        if connection is None:
-            connection = self.connection
-            self.connection = None
-        if connection is not None:
+        if client is None:
+            client = self.client
+            self.client = None
+        if client is not None:
             _ = asyncio.run_coroutine_threadsafe(
-                connection.disconnect(), self.event_loop
+                client.disconnect(), self.event_loop
             ).result()
 
     def connection_reset(self) -> None:
-        """Reset the connection by disconnecting and reconnecting."""
+        """Reset the client by disconnecting and reconnecting."""
         self.disconnect()
-        self.connect(
-            self.host, self.port, self.endpoint, self.timeout, encryption=False
-        )
+        self.connect()
 
     def is_connected(self) -> bool:
         """
@@ -712,7 +663,7 @@ class SCU:
         :return: True if the SCU has a connection, False otherwise.
         :rtype: bool
         """
-        return self.connection is not None
+        return self.client is not None
 
     def take_authority(self, user: str | int) -> tuple[int, str]:
         """
@@ -814,7 +765,7 @@ class SCU:
                 result.update({type_name: getattr(ua, type_name)})
             except AttributeError:
                 try:
-                    enum_node = self.connection.get_node(
+                    enum_node = self.client.get_node(
                         f"ns={self.ns_idx};s=@{type_name}.EnumValues"
                     )
                     enum_dict = self._create_enum_from_node(type_name, enum_node)
@@ -1012,7 +963,7 @@ class SCU:
             self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
         else:
             plc_prg = asyncio.run_coroutine_threadsafe(
-                self.connection.nodes.objects.get_child(
+                self.client.nodes.objects.get_child(
                     [
                         f"{self.ns_idx}:Logic",
                         f"{self.ns_idx}:Application",
@@ -1050,7 +1001,7 @@ class SCU:
                 )
             else:
                 parameter = asyncio.run_coroutine_threadsafe(
-                    self.connection.nodes.objects.get_child(
+                    self.client.nodes.objects.get_child(
                         [f"{self.parameter_ns_idx}:{top_node_name}"]
                     ),
                     self.event_loop,
@@ -1079,7 +1030,7 @@ class SCU:
                     cached_nodes["node_ids"], top_node_name
                 )
             else:
-                server = self.connection.get_root_node()
+                server = self.client.get_root_node()
                 (
                     self.server_nodes,
                     self.server_attributes,
@@ -1109,7 +1060,7 @@ class SCU:
         commands = {}
         for node_name, tup in cache_dict.items():
             node_id, node_class = tup
-            node = self.connection.get_node(node_id)
+            node = self.client.get_node(node_id)
             nodes[node_name] = (node, node_class)
             if node_class == 2:
                 # An attribute. Add it to the attributes dict.
@@ -1380,7 +1331,7 @@ class SCU:
         elif isinstance(attribute, ua.uatypes.NodeId):
             dt_id = attribute
 
-        dt_node = self.connection.get_node(dt_id)
+        dt_node = self.client.get_node(dt_id)
         dt_node_info = asyncio.run_coroutine_threadsafe(
             dt_node.read_browse_name(), self.event_loop
         ).result()
@@ -1459,7 +1410,7 @@ class SCU:
         elif isinstance(enum_node, ua.uatypes.NodeId):
             dt_id = enum_node
 
-        dt_node = self.connection.get_node(dt_id)
+        dt_node = self.client.get_node(dt_id)
         dt_node_def = asyncio.run_coroutine_threadsafe(
             dt_node.read_data_type_definition(), self.event_loop
         ).result()
@@ -1515,7 +1466,7 @@ class SCU:
                 missing_nodes,
             )
         subscription = asyncio.run_coroutine_threadsafe(
-            self.connection.create_subscription(period, subscription_handler),
+            self.client.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
         handles = []
