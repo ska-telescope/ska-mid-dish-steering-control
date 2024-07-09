@@ -15,10 +15,10 @@ from enum import Enum
 from functools import cached_property
 from importlib import metadata, resources
 from pathlib import Path
-from typing import Any, Callable, Final, TypedDict
+from typing import Any, Callable, Final, Type, TypedDict
 
 import numpy
-import yaml
+import yaml  # type: ignore
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
@@ -30,8 +30,8 @@ logger = logging.getLogger("sculib")
 # Type aliases
 NodeDict = dict[str, tuple[Node, int]]
 AttrDict = dict[str, object]
-CmdDict = dict[str, Callable]
 CmdReturn = tuple[int, str, list[int | None] | None]
+CmdDict = dict[str, Callable[..., CmdReturn]]
 
 PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
@@ -386,8 +386,8 @@ class SCU:
         self._app_name = app_name
         self.event_loop_thread: threading.Thread | None = None
         self.subscription_handler = None
-        self.subscriptions = {}
-        self.subscription_queue = queue.Queue()
+        self.subscriptions: dict = {}
+        self.subscription_queue: queue.Queue = queue.Queue()
         if eventloop is None:
             self._create_and_start_asyncio_event_loop()
         else:
@@ -409,6 +409,7 @@ class SCU:
         else:
             self._server_str_id = f"{self._server_url} - v{self.server_version}"
 
+        self.commands: CmdDict
         self.populate_node_dicts(gui_app, use_nodes_cache)
         self._user: int | None = None
         self._session_id: ua.UInt16 | None = None
@@ -747,7 +748,7 @@ class SCU:
             return None
 
     @cached_property
-    def opcua_enum_types(self) -> dict:
+    def opcua_enum_types(self) -> dict[str, Type[Enum]]:
         """
         Retrieve a dictionary of OPC-UA enum types.
 
@@ -981,7 +982,7 @@ class SCU:
             ) = self.generate_node_dicts_from_cache(
                 cached_nodes["node_ids"], top_node_name
             )
-            self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
+            self._plc_prg_nodes_timestamp: str = cached_nodes["timestamp"]
         else:
             plc_prg = asyncio.run_coroutine_threadsafe(
                 self.client.nodes.objects.get_child(
@@ -1175,7 +1176,7 @@ class SCU:
             node_name = node_name_separator.join(ancestors)
         except Exception:
             logger.exception("Invalid node for: %s", ancestors)
-            return ("", "")
+            return ("", [""])
 
         return (node_name, ancestors)
 
@@ -1198,9 +1199,9 @@ class SCU:
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
         :rtype: tuple
         """
-        nodes = {}
-        attributes = {}
-        commands = {}
+        nodes: NodeDict = {}
+        attributes: AttrDict = {}
+        commands: CmdDict = {}
         node_name, ancestors = self.generate_full_node_name(node, parent_names)
         # Do not add the InputArgument and OutputArgument nodes.
         if (
@@ -1222,7 +1223,7 @@ class SCU:
             children = asyncio.run_coroutine_threadsafe(
                 node.get_children(), self.event_loop
             ).result()
-            child_nodes = {}
+            child_nodes: NodeDict = {}
             for child in children:
                 child_nodes, child_attributes, child_commands = self.get_sub_nodes(
                     child, parent_names=ancestors
