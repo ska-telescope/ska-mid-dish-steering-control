@@ -843,7 +843,7 @@ class SCU:
         )
         uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
 
-        def fn(*args) -> CmdReturn:
+        def fn(*args: Any) -> CmdReturn:
             """
             Execute function with arguments and return tuple with return code/message.
 
@@ -1457,7 +1457,7 @@ class SCU:
         self,
         attributes: str | list[str],
         period: int = 100,
-        data_queue: queue.Queue = None,
+        data_queue: queue.Queue | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1595,7 +1595,8 @@ class SCU:
         # pylint: disable=no-member
         positions = self.load_track_table_file(file_name)
         # Reset the currently loaded track table.
-        self.load_program_track(ua.LoadModeType.Reset, 0, [0.0], [0.0], [0.0])
+        zero = numpy.zeros(1)
+        self.load_program_track(ua.LoadModeType.Reset, 0, zero, zero, zero)
         # Submit the new track table.
         self.load_program_track(
             ua.LoadModeType.New,
@@ -1695,7 +1696,11 @@ class SCU:
         return self.commands[Command.MOVE2BAND.value](bands[position])
 
     def abs_azel(
-        self, az_angle, el_angle, az_velocity: float = None, el_velocity: float = None
+        self,
+        az_angle: float,
+        el_angle: float,
+        az_velocity: float = None,
+        el_velocity: float = None,
     ) -> CmdReturn:
         """
         Calculate and move the telescope to an absolute azimuth and elevation position.
@@ -1786,7 +1791,7 @@ class SCU:
         logger.info("deactivate feed indexer")
         return self.deactivate_dmc(2)
 
-    def abs_azimuth(self, az_angle, az_vel) -> CmdReturn:
+    def abs_azimuth(self, az_angle: float, az_vel: float) -> CmdReturn:
         """
         Calculate the absolute azimuth based on azimuth angle and azimuth velocity.
 
@@ -1799,7 +1804,7 @@ class SCU:
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](0, az_angle, az_vel)
 
-    def abs_elevation(self, el_angle, el_vel) -> CmdReturn:
+    def abs_elevation(self, el_angle: float, el_vel: float) -> CmdReturn:
         """
         Calculate the absolute elevation angle and velocity.
 
@@ -1812,7 +1817,7 @@ class SCU:
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](1, el_angle, el_vel)
 
-    def abs_feed_indexer(self, fi_angle, fi_vel) -> CmdReturn:
+    def abs_feed_indexer(self, fi_angle: float, fi_vel: float) -> CmdReturn:
         """
         Calculate the absolute feed indexer value.
 
@@ -1825,7 +1830,7 @@ class SCU:
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](2, fi_angle, fi_vel)
 
-    def load_static_offset(self, az_offset, el_offset) -> CmdReturn:
+    def load_static_offset(self, az_offset: float, el_offset: float) -> CmdReturn:
         """
         Load static azimuth and elevation offsets for tracking.
 
@@ -1838,7 +1843,14 @@ class SCU:
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
         return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](az_offset, el_offset)
 
-    def load_program_track(self, load_type, entries, t, az, el) -> CmdReturn:
+    def load_program_track(
+        self,
+        load_type: str,
+        entries: int,
+        t: numpy.ndarray,
+        az: numpy.ndarray,
+        el: numpy.ndarray,
+    ) -> CmdReturn:
         """
         Load a program track with provided entries, time offsets, azimuth and elevation.
 
@@ -1847,11 +1859,11 @@ class SCU:
         :param entries: Number of entries in the track table.
         :type entries: int
         :param t: List of time offset values.
-        :type t: list
+        :type t: numpy.ndarray
         :param az: List of azimuth values.
-        :type az: list
+        :type az: numpy.ndarray
         :param el: List of elevation values.
-        :type el: list
+        :type el: numpy.ndarray
         :raises IndexError: If the provided track table contents are not aligned.
         """
         logger.info("%s", load_type)
@@ -1946,7 +1958,7 @@ class SCU:
             raise e
 
     def start_program_track(
-        self, start_time, start_restart_or_stop: bool = True
+        self, start_time: datetime.datetime, start_restart_or_stop: bool = True
     ) -> CmdReturn:
         # unused
         # ptrackA = 11
@@ -1991,8 +2003,13 @@ class SCU:
         return self.commands[Command.TRACK_LOAD_TABLE.value](0, number_of_entries, body)
 
     def _format_tt_line(
-        self, t, az, el, capture_flag: int = 1, parallactic_angle: float = 0.0
-    ):
+        self,
+        t: float,
+        az: float,
+        el: float,
+        capture_flag: int = 1,
+        parallactic_angle: float = 0.0,
+    ) -> str:
         """
         Something will provide a time, az, and el as minimum.
 
@@ -2005,7 +2022,7 @@ class SCU:
         )
         return f_str
 
-    def _format_body(self, t, az, el):
+    def _format_body(self, t: list[float], az: list[float], el: list[float]) -> str:
         """
         Format the body of a message with timestamp, azimuth, and elevation values.
 
