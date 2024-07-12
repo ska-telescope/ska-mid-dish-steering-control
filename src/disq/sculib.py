@@ -932,7 +932,7 @@ class SCU:
                 node.get_parent(),
             )
 
-            def empty_func(*args) -> None:
+            def empty_func(*args: Any) -> CmdReturn:
                 logger.warning("Command node %s has no method to call.", uid)
                 return -1, "No method", None
 
