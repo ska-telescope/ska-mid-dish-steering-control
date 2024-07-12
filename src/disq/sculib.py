@@ -675,26 +675,31 @@ class SCU:
         :return: The result of the command execution.
         :rtype: tuple[int, str]
         """
-        if self._user is None and self._session_id is None:
-            self._user = (
-                self.convert_enum_to_int("DscCmdAuthorityType", user)
-                if isinstance(user, str)
-                else user
-            )
+        user_int = (
+            self.convert_enum_to_int("DscCmdAuthorityType", user)
+            if isinstance(user, str)
+            else user
+        )
+        if user_int == 2:  # HHP
+            code = -1
+            msg = "DiSQ-SCU cannot take authority as HHP user"
+            logger.info("TakeAuth command not executed, as %s", msg)
+        elif self._user is None or (self._user is not None and self._user < user_int):
             code, msg, vals = self.commands[Command.TAKE_AUTH.value](
-                ua.UInt16(self._user)
+                ua.UInt16(user_int)
                 # TODO: Remove 'if else' when simulator is fixed
                 if self.namespace != "CETC54"
-                else ua.Int32(self._user)
+                else ua.Int32(user_int)
             )
             if code == 10:  # CommandDone
+                self._user = user_int
                 self._session_id = ua.UInt16(vals[0])
             else:
-                self._user = None
                 logger.error("TakeAuth command failed with message '%s'", msg)
         else:
+            user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
             code = -1
-            msg = f"DiSQ already has command authority with user {self._user}"
+            msg = f"DiSQ-SCU already has command authority with user {user_str}"
             logger.info("TakeAuth command not executed, as %s", msg)
         return code, msg
 
@@ -713,11 +718,18 @@ class SCU:
                 else ua.Int32(self._user)
             )
             if code == 10:  # CommandDone
-                self._user = None
-                self._session_id = None
+                self._user, self._session_id = None, None
+            elif code in [0, 4]:  # NoCmdAuth, CommandFailed
+                user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                logger.info(
+                    "DiSQ-SCU has already lost command authority as user '%s' to "
+                    "another client.",
+                    user,
+                )
+                self._user, self._session_id = None, None
         else:
             code = -1
-            msg = "DiSQ has no command authority to release."
+            msg = "DiSQ-SCU has no command authority to release."
             logger.info(msg)
         return code, msg
 
@@ -746,6 +758,27 @@ class SCU:
         except AttributeError:
             logger.error("OPC-UA server has no '%s' enum!", enum_type)
             return None
+
+    def convert_int_to_enum(self, enum_type: str, value: int) -> str | int:
+        """
+        Convert the integer value of the given enumeration type to its name (string).
+
+        :param enum_type: the name of the enumeration type to use.
+        :type enum_type: str
+        :param value: of enum to convert.
+        :type value: int
+        :return: enum name, or the original integer value if the type does not exist.
+        :rtype: str | int
+        """
+        try:
+            return (
+                str(getattr(ua, enum_type)(value).name)
+                if hasattr(ua, enum_type)
+                else value
+            )
+        except ValueError:
+            logger.error("%s is not a valid '%s' enum value!", value, enum_type)
+            return value
 
     @cached_property
     def opcua_enum_types(self) -> dict[str, Type[Enum]]:
@@ -885,6 +918,14 @@ class SCU:
                     return_msg = str(ua.CmdResponseType(return_code).name)
                 else:
                     return_msg = str(return_code)
+                if return_code == 0:  # NoCmdAuth
+                    user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                    logger.info(
+                        "DiSQ-SCU has lost command authority as user '%s' to "
+                        "another client.",
+                        user,
+                    )
+                    self._user, self._session_id = None, None
                 return (return_code, return_msg, return_vals)
             except Exception as e:
                 # e.add_note(f'Command: {uid} args: {args}')
