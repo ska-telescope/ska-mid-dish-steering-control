@@ -69,10 +69,14 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
             )
             config["handlers"]["file_handler"]["atTime"] = at_time
         except KeyError as e:
-            print(f"WARNING: {e} not found in logging configuration for file_handler")
+            print(
+                f"WARNING: {e} not found in logging configuration for file_handler"
+            )
 
     else:
-        print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
+        print(
+            f"WARNING: Logging configuration file {disq_log_config_file} not found"
+        )
 
     if config is None:
         print("Reverting to basic logging config at level:{default_log_level}")
@@ -138,7 +142,9 @@ def create_rw_attribute(
                 ).result()
             except Exception as e:
                 msg = f"Failed to read value of node: {node_name}"
-                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), event_loop
+                )
                 return None
 
         @value.setter
@@ -149,7 +155,9 @@ def create_rw_attribute(
                 ).result()
             except Exception as e:
                 msg = f"Failed to write value of node: {node_name}={_value}"
-                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), event_loop
+                )
 
     return opc_ua_rw_attribute()
 
@@ -182,7 +190,9 @@ def create_ro_attribute(
                 ).result()
             except Exception as e:
                 msg = f"Failed to read value of node: {node_name}"
-                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), event_loop
+                )
                 return None
 
     return opc_ua_ro_attribute()
@@ -199,7 +209,9 @@ class SubscriptionHandler:
     :type nodes: dict
     """
 
-    def __init__(self, subscription_queue: queue.Queue, nodes: dict[Node, str]) -> None:
+    def __init__(
+        self, subscription_queue: queue.Queue, nodes: dict[Node, str]
+    ) -> None:
         """
         Initialize the object with a subscription queue and nodes.
 
@@ -222,7 +234,9 @@ class SubscriptionHandler:
         """
         name = self.nodes[node]
         source_timestamp = data.monitored_item.Value.SourceTimestamp
-        server_timestamp = data.monitored_item.Value.ServerTimestamp.timestamp()
+        server_timestamp = (
+            data.monitored_item.Value.ServerTimestamp.timestamp()
+        )
         value_for_queue = {
             "name": name,
             "node": node,
@@ -407,7 +421,9 @@ class SCU:
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
         else:
-            self._server_str_id = f"{self._server_url} - v{self.server_version}"
+            self._server_str_id = (
+                f"{self._server_url} - v{self.server_version}"
+            )
 
         self.commands: CmdDict
         self.populate_node_dicts(gui_app, use_nodes_cache)
@@ -459,7 +475,9 @@ class SCU:
             ).result()
         except Exception as e:
             msg = "Failed to read value of DscSoftwareVersion attribute."
-            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            asyncio.run_coroutine_threadsafe(
+                handle_exception(e, msg), self.event_loop
+            )
             server_version = None
         return server_version
 
@@ -511,7 +529,9 @@ class SCU:
             daemon=True,
         )
         self.event_loop_thread.start()
-        thread_started_event.wait(5.0)  # Wait for the event loop thread to start
+        thread_started_event.wait(
+            5.0
+        )  # Wait for the event loop thread to start
 
     def set_up_encryption(self, client: Client, user: str, pw: str) -> None:
         """
@@ -525,9 +545,13 @@ class SCU:
         :type pw: str
         """
         # this is generated if it does not exist
-        opcua_client_key = Path(str(resources.files(__package__) / "certs/key.pem"))
+        opcua_client_key = Path(
+            str(resources.files(__package__) / "certs/key.pem")
+        )
         # this is generated if it does not exist
-        opcua_client_cert = Path(str(resources.files(__package__) / "certs/cert.der"))
+        opcua_client_cert = Path(
+            str(resources.files(__package__) / "certs/cert.der")
+        )
         # get from simulator/PKI/private/SimpleServer_2048.der in tarball
         opcua_server_cert = Path(
             str(resources.files(__package__) / "certs/SimpleServer_2048.der")
@@ -574,20 +598,28 @@ class SCU:
         client = Client(server_url, self.timeout)
         hostname = socket.gethostname()
         # Set the ClientDescription fields
-        client.application_uri = f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
-        client.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
+        client.application_uri = (
+            f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
+        )
+        client.product_uri = (
+            "gitlab.com/ska-telescope/ska-mid-dish-qualification"
+        )
         client.name = f"{self._app_name} @{hostname}"
         client.description = f"{self._app_name} @{hostname}"
         if self.username is not None and self.password is not None:
             self.set_up_encryption(client, self.username, self.password)
-        _ = asyncio.run_coroutine_threadsafe(client.connect(), self.event_loop).result()
+        _ = asyncio.run_coroutine_threadsafe(
+            client.connect(), self.event_loop
+        ).result()
         self._server_url = server_url
         try:
             _ = asyncio.run_coroutine_threadsafe(
                 client.load_data_type_definitions(), self.event_loop
             ).result()
         except Exception as exc:
-            logger.warning("Exception trying load_data_type_definitions(): %s", exc)
+            logger.warning(
+                "Exception trying load_data_type_definitions(): %s", exc
+            )
         # Get the namespace index for the PLC's Parameter node
         try:
             self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(
@@ -684,7 +716,9 @@ class SCU:
             code = -1
             msg = "DiSQ-SCU cannot take authority as HHP user"
             logger.info("TakeAuth command not executed, as %s", msg)
-        elif self._user is None or (self._user is not None and self._user < user_int):
+        elif self._user is None or (
+            self._user is not None and self._user < user_int
+        ):
             code, msg, vals = self.commands[Command.TAKE_AUTH.value](
                 ua.UInt16(user_int)
                 # TODO: Remove 'if else' when simulator is fixed
@@ -697,9 +731,13 @@ class SCU:
             else:
                 logger.error("TakeAuth command failed with message '%s'", msg)
         else:
-            user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+            user_str = self.convert_int_to_enum(
+                "DscCmdAuthorityType", self._user
+            )
             code = -1
-            msg = f"DiSQ-SCU already has command authority with user {user_str}"
+            msg = (
+                f"DiSQ-SCU already has command authority with user {user_str}"
+            )
             logger.info("TakeAuth command not executed, as %s", msg)
         return code, msg
 
@@ -720,7 +758,9 @@ class SCU:
             if code == 10:  # CommandDone
                 self._user, self._session_id = None, None
             elif code in [0, 4]:  # NoCmdAuth, CommandFailed
-                user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                user = self.convert_int_to_enum(
+                    "DscCmdAuthorityType", self._user
+                )
                 logger.info(
                     "DiSQ-SCU has already lost command authority as user '%s' to "
                     "another client.",
@@ -750,7 +790,9 @@ class SCU:
             value = getattr(ua, enum_type)[name]
             integer = value.value if isinstance(value, Enum) else value
             return (
-                ua.UInt16(integer) if self.namespace != "CETC54" else ua.Int32(integer)
+                ua.UInt16(integer)
+                if self.namespace != "CETC54"
+                else ua.Int32(integer)
             )  # TODO: Remove 'if else' when simulator is fixed
         except KeyError:
             logger.error("'%s' enum does not have '%s key!", enum_type, name)
@@ -777,7 +819,9 @@ class SCU:
                 else value
             )
         except ValueError:
-            logger.error("%s is not a valid '%s' enum value!", value, enum_type)
+            logger.error(
+                "%s is not a valid '%s' enum value!", value, enum_type
+            )
             return value
 
     @cached_property
@@ -811,7 +855,10 @@ class SCU:
             try:
                 result.update({type_name: getattr(ua, type_name)})
                 # TODO: Remove 'if' block when simulator is fixed
-                if self.namespace == "CETC54" and type_name == "AxisSelectType":
+                if (
+                    self.namespace == "CETC54"
+                    and type_name == "AxisSelectType"
+                ):
                     axis_enum = Enum(
                         "AxisSelectType",
                         {"Unknown": 0, "Az": 1, "El": 2, "Fi": 3, "AzEl": 4},
@@ -823,7 +870,9 @@ class SCU:
                     enum_node = self.client.get_node(
                         f"ns={self.ns_idx};s=@{type_name}.EnumValues"
                     )
-                    enum_dict = self._create_enum_from_node(type_name, enum_node)
+                    enum_dict = self._create_enum_from_node(
+                        type_name, enum_node
+                    )
                     result.update({type_name: enum_dict})
                     setattr(ua, type_name, enum_dict)
                 except (RuntimeError, ValueError):
@@ -841,7 +890,9 @@ class SCU:
             node.get_value(), self.event_loop
         ).result()
         if not isinstance(enum_values, list):
-            raise ValueError(f"Expected a list of EnumValueType for node '{name}'.")
+            raise ValueError(
+                f"Expected a list of EnumValueType for node '{name}'."
+            )
         enum_dict = {}
         for value in enum_values:
             display_name = value.DisplayName.Text
@@ -866,11 +917,27 @@ class SCU:
         :return: A function that can be used to execute a method on the Node.
         :rtype: function
         """
-        call = (
-            asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop)
-            .result()
-            .call_method
-        )
+        try:
+            call = (
+                asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop)
+                .result()
+                .call_method
+            )
+        except AttributeError as e:
+            logger.warning(
+                "Caught an exception while trying to get the method for a command.\n"
+                "Exception: %s\nNode name: %s\nParent object: %s",
+                e,
+                node_name,
+                node.get_parent(),
+            )
+
+            def empty_func(*args) -> None:
+                logger.warning("Command node %s has no method to call.", uid)
+                return -1, "No method", None
+
+            return empty_func
+
         read_name = asyncio.run_coroutine_threadsafe(
             node.read_display_name(), event_loop
         )
@@ -900,7 +967,9 @@ class SCU:
                     else [*args]
                 )
                 logger.debug(
-                    "Calling command node '%s' with args list: %s", uid, cmd_args
+                    "Calling command node '%s' with args list: %s",
+                    uid,
+                    cmd_args,
                 )
                 result: int | list[Any] = asyncio.run_coroutine_threadsafe(
                     call(uid, *cmd_args), event_loop
@@ -919,7 +988,9 @@ class SCU:
                 else:
                     return_msg = str(return_code)
                 if return_code == 0:  # NoCmdAuth
-                    user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                    user = self.convert_int_to_enum(
+                        "DscCmdAuthorityType", self._user
+                    )
                     logger.info(
                         "DiSQ-SCU has lost command authority as user '%s' to "
                         "another client.",
@@ -930,7 +1001,9 @@ class SCU:
             except Exception as e:
                 # e.add_note(f'Command: {uid} args: {args}')
                 asyncio.run_coroutine_threadsafe(
-                    handle_exception(e, f"Command: {uid} ({node_name}), args: {args}"),
+                    handle_exception(
+                        e, f"Command: {uid} ({node_name}), args: {args}"
+                    ),
                     event_loop,
                 )
                 return -1, f"asyncua exception: {str(e)}", None
@@ -1012,7 +1085,9 @@ class SCU:
         top_node_name = "PLC_PRG"
         cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
         cache = self._load_json_file(cache_file_path) if use_cache else None
-        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+        cached_nodes = (
+            cache.get(self._server_str_id) if cache is not None else None
+        )
 
         # Check for existing Nodes IDs cache
         if cached_nodes:
@@ -1052,8 +1127,12 @@ class SCU:
         top_node_name = "Parameter"
         cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
         if not plc_only and self.parameter_ns_idx is not None:
-            cache = self._load_json_file(cache_file_path) if use_cache else None
-            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+            cache = (
+                self._load_json_file(cache_file_path) if use_cache else None
+            )
+            cached_nodes = (
+                cache.get(self._server_str_id) if cache is not None else None
+            )
             if cached_nodes:
                 (
                     self.parameter_nodes,
@@ -1073,7 +1152,9 @@ class SCU:
                     self.parameter_nodes,
                     self.parameter_attributes,
                     self.parameter_commands,
-                ) = self.generate_node_dicts_from_server(parameter, top_node_name)
+                ) = self.generate_node_dicts_from_server(
+                    parameter, top_node_name
+                )
                 self.parameter = parameter
                 self._cache_node_ids(cache_file_path, self.parameter_nodes)
 
@@ -1082,8 +1163,12 @@ class SCU:
         top_node_name = "Root"
         cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
         if not plc_only:
-            cache = self._load_json_file(cache_file_path) if use_cache else None
-            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+            cache = (
+                self._load_json_file(cache_file_path) if use_cache else None
+            )
+            cached_nodes = (
+                cache.get(self._server_str_id) if cache is not None else None
+            )
             if cached_nodes:
                 (
                     self.server_nodes,
@@ -1247,12 +1332,15 @@ class SCU:
         # Do not add the InputArgument and OutputArgument nodes.
         if (
             node_name.endswith(".InputArguments", node_name.rfind(".")) is True
-            or node_name.endswith(".OutputArguments", node_name.rfind(".")) is True
+            or node_name.endswith(".OutputArguments", node_name.rfind("."))
+            is True
         ):
             return nodes, attributes, commands
 
         node_class = (
-            asyncio.run_coroutine_threadsafe(node.read_node_class(), self.event_loop)
+            asyncio.run_coroutine_threadsafe(
+                node.read_node_class(), self.event_loop
+            )
             .result()
             .value
         )
@@ -1266,8 +1354,8 @@ class SCU:
             ).result()
             child_nodes: NodeDict = {}
             for child in children:
-                child_nodes, child_attributes, child_commands = self.get_sub_nodes(
-                    child, parent_names=ancestors
+                child_nodes, child_attributes, child_commands = (
+                    self.get_sub_nodes(child, parent_names=ancestors)
                 )
                 nodes.update(child_nodes)
                 attributes.update(child_attributes)
@@ -1385,7 +1473,9 @@ class SCU:
         logger.debug("\n".join(nodes.keys()))
         return list(nodes.keys())
 
-    def get_attribute_data_type(self, attribute: str | ua.uatypes.NodeId) -> str:
+    def get_attribute_data_type(
+        self, attribute: str | ua.uatypes.NodeId
+    ) -> str:
         """
         Get the data type for the given node.
 
@@ -1463,7 +1553,9 @@ class SCU:
             f"actual: {field.Value}"
         )
 
-    def get_enum_strings(self, enum_node: str | ua.uatypes.NodeId) -> list[str]:
+    def get_enum_strings(
+        self, enum_node: str | ua.uatypes.NodeId
+    ) -> list[str]:
         """
         Get list of enum strings where the index of the list matches the enum value.
 
@@ -1516,7 +1608,9 @@ class SCU:
         """
         if data_queue is None:
             data_queue = self.subscription_queue
-        subscription_handler = SubscriptionHandler(data_queue, self.nodes_reversed)
+        subscription_handler = SubscriptionHandler(
+            data_queue, self.nodes_reversed
+        )
         if not isinstance(attributes, list):
             attributes = [
                 attributes,
@@ -1547,7 +1641,9 @@ class SCU:
                 ).result()
                 handles.append(handle)
             except Exception as e:
-                msg = f"Failed to subscribe to node '{node.nodeid.to_string()}'"
+                msg = (
+                    f"Failed to subscribe to node '{node.nodeid.to_string()}'"
+                )
                 asyncio.run_coroutine_threadsafe(
                     handle_exception(e, msg), self.event_loop
                 )
@@ -1590,7 +1686,9 @@ class SCU:
         """
         values = []
         while not self.subscription_queue.empty():
-            values.append(self.subscription_queue.get(block=False, timeout=0.1))
+            values.append(
+                self.subscription_queue.get(block=False, timeout=0.1)
+            )
         return values
 
     def load_track_table_file(self, file_name: str) -> numpy.ndarray:
@@ -1622,7 +1720,9 @@ class SCU:
             return numpy.array(cleaned_lines, dtype=float)
         except Exception as e:
             logger.error(
-                "Could not load or convert the track table file '%s': %s", file_name, e
+                "Could not load or convert the track table file '%s': %s",
+                file_name,
+                e,
             )
             raise e
 
@@ -1843,7 +1943,9 @@ class SCU:
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
-        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](0, az_angle, az_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
+            0, az_angle, az_vel
+        )
 
     def abs_elevation(self, el_angle: float, el_vel: float) -> CmdReturn:
         """
@@ -1856,7 +1958,9 @@ class SCU:
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
-        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](1, el_angle, el_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
+            1, el_angle, el_vel
+        )
 
     def abs_feed_indexer(self, fi_angle: float, fi_vel: float) -> CmdReturn:
         """
@@ -1869,9 +1973,13 @@ class SCU:
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
-        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](2, fi_angle, fi_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
+            2, fi_angle, fi_vel
+        )
 
-    def load_static_offset(self, az_offset: float, el_offset: float) -> CmdReturn:
+    def load_static_offset(
+        self, az_offset: float, el_offset: float
+    ) -> CmdReturn:
         """
         Load static azimuth and elevation offsets for tracking.
 
@@ -1882,7 +1990,9 @@ class SCU:
         :return: The result of loading the static offsets.
         """
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
-        return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](az_offset, el_offset)
+        return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](
+            az_offset, el_offset
+        )
 
     def load_program_track(
         self,
@@ -2041,7 +2151,9 @@ class SCU:
                 "acu_ska_track requires as first parameter the number of entries!"
             )
             raise ValueError
-        return self.commands[Command.TRACK_LOAD_TABLE.value](0, number_of_entries, body)
+        return self.commands[Command.TRACK_LOAD_TABLE.value](
+            0, number_of_entries, body
+        )
 
     def _format_tt_line(
         self,
@@ -2063,7 +2175,9 @@ class SCU:
         )
         return f_str
 
-    def _format_body(self, t: list[float], az: list[float], el: list[float]) -> str:
+    def _format_body(
+        self, t: list[float], az: list[float], el: list[float]
+    ) -> str:
         """
         Format the body of a message with timestamp, azimuth, and elevation values.
 
