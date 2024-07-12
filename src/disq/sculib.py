@@ -46,14 +46,13 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
     :type default_log_level: int
     :raises ValueError: If an error occurs while configuring logging from the file.
     """
-    if Path("disq_logging_config.yaml").exists():
-        disq_log_config_file = "disq_logging_config.yaml"
-    else:
-        disq_log_config_file = (
+    disq_log_config_file = Path("disq_logging_config.yaml")
+    if disq_log_config_file.exists() is False:
+        disq_log_config_file = Path(
             resources.files(__package__) / "default_logging_config.yaml"  # type: ignore
         )
     config = None
-    if Path(disq_log_config_file).exists():  # type: ignore
+    if disq_log_config_file.exists():
         with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
             try:
                 config = yaml.safe_load(f.read())
@@ -70,7 +69,6 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
             config["handlers"]["file_handler"]["atTime"] = at_time
         except KeyError as e:
             print(f"WARNING: {e} not found in logging configuration for file_handler")
-
     else:
         print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
 
