@@ -685,9 +685,6 @@ class SCU:
         elif self._user is None or (self._user is not None and self._user < user_int):
             code, msg, vals = self.commands[Command.TAKE_AUTH.value](
                 ua.UInt16(user_int)
-                # TODO: Remove 'if else' when simulator is fixed
-                if self.namespace != "CETC54"
-                else ua.Int32(user_int)
             )
             if code == 10:  # CommandDone
                 self._user = user_int
@@ -711,9 +708,6 @@ class SCU:
         if self._user is not None and self._session_id is not None:
             code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
                 ua.UInt16(self._user)
-                # TODO: Remove 'if else' when simulator is fixed
-                if self.namespace != "CETC54"
-                else ua.Int32(self._user)
             )
             if code == 10:  # CommandDone
                 self._user, self._session_id = None, None
@@ -747,9 +741,7 @@ class SCU:
         try:
             value = getattr(ua, enum_type)[name]
             integer = value.value if isinstance(value, Enum) else value
-            return (
-                ua.UInt16(integer) if self.namespace != "CETC54" else ua.Int32(integer)
-            )  # TODO: Remove 'if else' when simulator is fixed
+            return ua.UInt16(integer)
         except KeyError:
             logger.error("'%s' enum does not have '%s key!", enum_type, name)
             return None
@@ -808,14 +800,6 @@ class SCU:
         for type_name in expected_types:
             try:
                 result.update({type_name: getattr(ua, type_name)})
-                # TODO: Remove 'if' block when simulator is fixed
-                if self.namespace == "CETC54" and type_name == "AxisSelectType":
-                    axis_enum = Enum(
-                        "AxisSelectType",
-                        {"Unknown": 0, "Az": 1, "El": 2, "Fi": 3, "AzEl": 4},
-                    )
-                    result.update({type_name: axis_enum})
-                    setattr(ua, type_name, axis_enum)
             except AttributeError:
                 try:
                     enum_node = self.client.get_node(
