@@ -349,7 +349,7 @@ class SCU:
         app_name: str = f"DiSQ.sculib v{PACKAGE_VERSION}",
     ) -> None:
         """
-        Initializes the sculib with the provided parameters.
+        Initialise SCU with the provided parameters.
 
         :param host: The hostname or IP address of the server. Default is 'localhost'.
         :type host: str
@@ -373,9 +373,9 @@ class SCU:
         :type use_nodes_cache: bool
         :param app_name: application name for OPC UA client description.
         :type app_name: str
-        :raises Exception: If connection to OPC UA server fails.
         """
-        logger.info("Initialising sculib")
+        logger.info("Initialising SCU")
+        # Intialised variables
         self.host = host
         self.port = port
         self.endpoint = endpoint
@@ -383,16 +383,47 @@ class SCU:
         self.username = username
         self.password = password
         self.timeout = timeout
-        self._app_name = app_name
-        self.event_loop_thread: threading.Thread | None = None
-        self.subscription_handler = None
-        self.subscriptions: dict = {}
-        self.subscription_queue: queue.Queue = queue.Queue()
         if eventloop is None:
             self._create_and_start_asyncio_event_loop()
         else:
             self.event_loop = eventloop
         logger.info("Event loop: %s", self.event_loop)
+        self._gui_app = gui_app
+        self._use_nodes_cache = use_nodes_cache
+        self._app_name = app_name
+        # Other local variables
+        self.client: Client
+        self.event_loop_thread: threading.Thread | None = None
+        self.subscription_handler = None
+        self.subscriptions: dict = {}
+        self.subscription_queue: queue.Queue = queue.Queue()
+        self._user: int | None = None
+        self._session_id: ua.UInt16 | None = None
+        self._server_url: str
+        self._server_str_id: str
+        self.plc_prg: Node
+        self.ns_idx: int
+        self.nodes: NodeDict
+        self.nodes_reversed: dict[tuple[Node, int], str]
+        self.attributes: AttrDict
+        self.commands: CmdDict
+        self._plc_prg_nodes_timestamp: str
+        self.parameter: Node
+        self.parameter_ns_idx: int
+        self.parameter_nodes: NodeDict
+        self.parameter_attributes: AttrDict
+        self.parameter_commands: CmdDict
+        self.server: Node
+        self.server_nodes: NodeDict
+        self.server_attributes: AttrDict
+        self.server_commands: CmdDict
+
+    def connect_and_setup(self) -> None:
+        """
+        Connect to the server and setup the SCU client.
+
+        :raises Exception: If connection to OPC UA server fails.
+        """
         try:
             self.client = self.connect()
         except Exception as e:
@@ -403,7 +434,6 @@ class SCU:
             )
             logger.error("%s - %s", msg, e)
             raise e
-
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
         else:
@@ -420,18 +450,19 @@ class SCU:
             except InvalidVersion:
                 logger.warning(
                     "Server version (%s) does not conform to semantic versioning",
-                    str(self.server_version),
+                    self.server_version,
                 )
+        self.populate_node_dicts(self._gui_app, self._use_nodes_cache)
+        logger.info("Successfully connected to server and initialised SCU client")
 
-        self.commands: CmdDict
-        self.populate_node_dicts(gui_app, use_nodes_cache)
-        self._user: int | None = None
-        self._session_id: ua.UInt16 | None = None
-        logger.info("Initialising sculib done.")
+    def __enter__(self) -> "SCU":
+        """Connect to the server and setup the SCU client."""
+        self.connect_and_setup()
+        return self
 
-    def __del__(self) -> None:
+    def disconnect_and_cleanup(self) -> None:
         """
-        Clean up resources and disconnect from all subscriptions.
+        Disconnect from server and clean up client resources.
 
         This method unsubscribes from all subscriptions, disconnects from the server,
         and stops the event loop if it was started in a separate thread.
@@ -444,6 +475,10 @@ class SCU:
             self.event_loop.call_soon_threadsafe(self.event_loop.stop)
             # Join the event loop thread once it is done processing tasks.
             self.event_loop_thread.join()
+
+    def __exit__(self, *args: Any) -> None:
+        """Disconnect from server and clean up client resources."""
+        self.disconnect_and_cleanup()
 
     @cached_property
     def server_version(self) -> str | None:
@@ -1040,7 +1075,7 @@ class SCU:
             ) = self.generate_node_dicts_from_cache(
                 cached_nodes["node_ids"], top_node_name
             )
-            self._plc_prg_nodes_timestamp: str = cached_nodes["timestamp"]
+            self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
         else:
             plc_prg = asyncio.run_coroutine_threadsafe(
                 self.client.nodes.objects.get_child(
