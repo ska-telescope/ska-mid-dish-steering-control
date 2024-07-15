@@ -1,25 +1,6 @@
-"""System Control Unit library for an OPC UA server."""
+"""System Control Unit library for an SKA-Mid Dish OPC UA server."""
 
-# pylint: disable=too-many-lines,broad-exception-caught
-
-# Feed Indexer tests [316-000000-043]
-# Author: P.P.A. Kotze
-# Date: 1/9/2020
-# Version:
-# 0.1 Initial
-# 0.2 Update after feedback and correction from HN email dated 1/8/2020
-# 0.3 Rework scu_get and scu_put to simplify
-# 0.4 attempt more generic scu_put with either jason payload or simple params, remove
-#   payload from feedback function
-# 0.5 create scu_lib
-# 0.6 1/10/2020 added load track tables and start table tracking also as debug added
-#   'field' command for old scu
-# HN: 13/05/2021 Changed the way file name is defined by defining a start time
-# 07/10/2021 Added new "save_session14" where file time is no longer added to the file
-#   name in this library, but expected to be passed as part of "filename" string
-#   argument from calling script.
-# 2023-08-31, Thomas Juerges Refactored the basic access mechanics for an OPC UA server.
-
+# pylint: disable=too-many-lines, broad-exception-caught
 import asyncio
 import datetime
 import enum
@@ -34,10 +15,10 @@ from enum import Enum
 from functools import cached_property
 from importlib import metadata, resources
 from pathlib import Path
-from typing import Any, Callable, Final, TypedDict
+from typing import Any, Callable, Final, Type, TypedDict
 
 import numpy
-import yaml
+import yaml  # type: ignore
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
@@ -46,9 +27,11 @@ from platformdirs import user_cache_dir
 
 logger = logging.getLogger("sculib")
 
+# Type aliases
 NodeDict = dict[str, tuple[Node, int]]
 AttrDict = dict[str, object]
-CmdDict = dict[str, Callable]
+CmdReturn = tuple[int, str, list[int | None] | None]
+CmdDict = dict[str, Callable[..., CmdReturn]]
 
 PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
@@ -63,14 +46,13 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
     :type default_log_level: int
     :raises ValueError: If an error occurs while configuring logging from the file.
     """
-    if Path("disq_logging_config.yaml").exists():
-        disq_log_config_file: resources.Traversable | str = "disq_logging_config.yaml"
-    else:
-        disq_log_config_file = (
-            resources.files(__package__) / "default_logging_config.yaml"
+    disq_log_config_file = Path("disq_logging_config.yaml")
+    if disq_log_config_file.exists() is False:
+        disq_log_config_file = Path(
+            resources.files(__package__) / "default_logging_config.yaml"  # type: ignore
         )
     config = None
-    if Path(disq_log_config_file).exists():
+    if disq_log_config_file.exists():
         with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
             try:
                 config = yaml.safe_load(f.read())
@@ -87,7 +69,6 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
             config["handlers"]["file_handler"]["atTime"] = at_time
         except KeyError as e:
             print(f"WARNING: {e} not found in logging configuration for file_handler")
-
     else:
         print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
 
@@ -258,6 +239,32 @@ class CachedNodesDict(TypedDict):
     timestamp: str
 
 
+class Command(Enum):
+    """
+    Commands of Dish Controller used in SCU methods.
+
+    This needs to be kept up to date with the ICD.
+    """
+
+    TAKE_AUTH = "CommandArbiter.Commands.TakeAuth"
+    RELEASE_AUTH = "CommandArbiter.Commands.ReleaseAuth"
+    ACTIVATE = "Management.Commands.Activate"
+    DEACTIVATE = "Management.Commands.DeActivate"
+    MOVE2BAND = "Management.Commands.Move2Band"
+    RESET = "Management.Commands.Reset"
+    SLEW2ABS_AZ_EL = "Management.Commands.Slew2AbsAzEl"
+    SLEW2ABS_SINGLE_AX = "Management.Commands.Slew2AbsSingleAx"
+    STOP = "Management.Commands.Stop"
+    STOW = "Management.Commands.Stow"
+    AMBTEMP_CORR_SETUP = "Pointing.Commands.AmbTempCorrSetup"
+    PM_CORR_ON_OFF = "Pointing.Commands.PmCorrOnOff"
+    STATIC_PM_SETUP = "Pointing.Commands.StaticPmSetup"
+    INTERLOCK_ACK = "Safety.Commands.InterlockAck"
+    TRACK_LOAD_STATIC_OFF = "Tracking.Commands.TrackLoadStaticOff"
+    TRACK_LOAD_TABLE = "Tracking.Commands.TrackLoadTable"
+    TRACK_START = "Tracking.Commands.TrackStart"
+
+
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
 class SCU:
     """
@@ -329,8 +336,8 @@ class SCU:
         self,
         host: str = "localhost",
         port: int = 4840,
-        endpoint: str = "/OPCUA/SimpleServer",
-        namespace: str = "CETC54",
+        endpoint: str = "",
+        namespace: str = "",
         username: str | None = None,
         password: str | None = None,
         timeout: float = 10.0,
@@ -346,9 +353,9 @@ class SCU:
         :type host: str
         :param port: The port number of the server. Default is 4840.
         :type port: int
-        :param endpoint: The endpoint on the server. Default is '/OPCUA/SimpleServer'.
+        :param endpoint: The endpoint on the server. Default is ''.
         :type endpoint: str
-        :param namespace: The namespace for the server. Default is 'CETC54'.
+        :param namespace: The namespace for the server. Default is ''.
         :type namespace: str
         :param username: The username for authentication. Default is None.
         :type username: str | None
@@ -371,52 +378,36 @@ class SCU:
         self.port = port
         self.endpoint = endpoint
         self.namespace = namespace
+        self.username = username
+        self.password = password
         self.timeout = timeout
         self._app_name = app_name
         self.event_loop_thread: threading.Thread | None = None
         self.subscription_handler = None
-        self.subscriptions = {}
-        self.subscription_queue = queue.Queue()
+        self.subscriptions: dict = {}
+        self.subscription_queue: queue.Queue = queue.Queue()
         if eventloop is None:
-            self.create_and_start_asyncio_event_loop()
+            self._create_and_start_asyncio_event_loop()
         else:
             self.event_loop = eventloop
         logger.info("Event loop: %s", self.event_loop)
         try:
-            self.connection = self.connect(
-                self.host, self.port, self.endpoint, self.timeout, encryption=False
+            self.client = self.connect()
+        except Exception as e:
+            msg = (
+                "Cannot connect to the OPC UA server. Please "
+                "check the connection parameters that were "
+                "passed to instantiate the sculib!"
             )
-        except Exception:
-            try:
-                user = "LMC"
-                pw = "lmc"
-                if username is not None:
-                    user = username
-                if password is not None:
-                    pw = password
-                self.connection = self.connect(
-                    self.host,
-                    self.port,
-                    self.endpoint,
-                    self.timeout,
-                    encryption=True,
-                    user=user,
-                    pw=pw,
-                )
-            except Exception as e:
-                msg = (
-                    "Cannot connect to the OPC UA server. Please "
-                    "check the connection parameters that were "
-                    "passed to instantiate the sculib!"
-                )
-                logger.error("%s - %s", msg, e)
-                raise e
+            logger.error("%s - %s", msg, e)
+            raise e
 
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
         else:
             self._server_str_id = f"{self._server_url} - v{self.server_version}"
 
+        self.commands: CmdDict
         self.populate_node_dicts(gui_app, use_nodes_cache)
         self._user: int | None = None
         self._session_id: ua.UInt16 | None = None
@@ -449,7 +440,7 @@ class SCU:
         """
         try:
             version_node = asyncio.run_coroutine_threadsafe(
-                self.connection.nodes.objects.get_child(
+                self.client.nodes.objects.get_child(
                     [
                         f"{self.ns_idx}:Logic",
                         f"{self.ns_idx}:Application",
@@ -502,7 +493,7 @@ class SCU:
         thread_started_event.set()  # Signal that the event loop thread has started
         event_loop.run_forever()
 
-    def create_and_start_asyncio_event_loop(self) -> None:
+    def _create_and_start_asyncio_event_loop(self) -> None:
         """
         Create and start an asyncio event loop in a separate thread.
 
@@ -520,15 +511,15 @@ class SCU:
         self.event_loop_thread.start()
         thread_started_event.wait(5.0)  # Wait for the event loop thread to start
 
-    def set_up_encryption(self, connection, user: str, pw: str) -> None:
+    def set_up_encryption(self, client: Client, user: str, pw: str) -> None:
         """
-        Set up encryption for the connection with the given user credentials.
+        Set up encryption for the client with the given user credentials.
 
-        :param connection: The connection object to set up encryption for.
-        :type connection: object
-        :param user: The username for the connection.
+        :param client: The client to set up encryption for.
+        :type client: Client
+        :param user: The username for the server.
         :type user: str
-        :param pw: The password for the connection.
+        :param pw: The password for the server.
         :type pw: str
         """
         # this is generated if it does not exist
@@ -539,15 +530,14 @@ class SCU:
         opcua_server_cert = Path(
             str(resources.files(__package__) / "certs/SimpleServer_2048.der")
         )
-        connection.set_user(user)
-        connection.set_password(pw)
+        client.set_user(user)
+        client.set_password(pw)
 
-        client_app_uri = "urn:freeopcua:client"
         _ = asyncio.run_coroutine_threadsafe(
             setup_self_signed_certificate(
                 key_file=opcua_client_key,
                 cert_file=opcua_client_cert,
-                app_uri=client_app_uri,
+                app_uri=client.application_uri,
                 host_name="localhost",
                 cert_use=[ExtendedKeyUsageOID.CLIENT_AUTH],
                 subject_attrs={
@@ -560,7 +550,7 @@ class SCU:
             self.event_loop,
         ).result()
         _ = asyncio.run_coroutine_threadsafe(
-            connection.set_security(
+            client.set_security(
                 SecurityPolicyBasic256,
                 certificate=str(opcua_client_cert),
                 private_key=str(opcua_client_key),
@@ -571,63 +561,35 @@ class SCU:
         ).result()
 
     # pylint: disable=too-many-arguments
-    def connect(
-        self,
-        host: str,
-        port: int,
-        endpoint: str,
-        timeout: float,
-        encryption: bool = True,
-        user: str = None,
-        pw: str = None,
-    ) -> Client:
+    def connect(self) -> Client:
         """
         Connect to an OPC UA server.
 
-        :param host: The host IP address or hostname of the OPC UA server.
-        :type host: str
-        :param port: The port number of the OPC UA server.
-        :type port: int
-        :param endpoint: The endpoint path of the OPC UA server.
-        :type endpoint: str
-        :param timeout: The timeout for the connection in seconds.
-        :type timeout: float
-        :param encryption: Flag indicating whether encryption is enabled (default is
-            True).
-        :type encryption: bool
-        :param user: Optional username for authentication.
-        :type user: str
-        :param pw: Optional password for authentication.
-        :type pw: str
         :raises: Exception if an error occurs during the connection process.
         """
-        server_url = f"opc.tcp://{host}:{port}{endpoint}"
+        server_url = f"opc.tcp://{self.host}:{self.port}{self.endpoint}"
         logger.info("Connecting to: %s", server_url)
-        connection = Client(server_url, timeout)
+        client = Client(server_url, self.timeout)
         hostname = socket.gethostname()
         # Set the ClientDescription fields
-        connection.application_uri = (
-            f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
-        )
-        connection.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
-        connection.name = f"{self._app_name} @{hostname}"
-        connection.description = f"{self._app_name} @{hostname}"
-        if encryption:
-            self.set_up_encryption(connection, user, pw)
-        _ = asyncio.run_coroutine_threadsafe(
-            connection.connect(), self.event_loop
-        ).result()
+        client.application_uri = f"urn:{hostname}:{self._app_name.replace(' ', '-')}"
+        client.product_uri = "gitlab.com/ska-telescope/ska-mid-dish-qualification"
+        client.name = f"{self._app_name} @{hostname}"
+        client.description = f"{self._app_name} @{hostname}"
+        if self.username is not None and self.password is not None:
+            self.set_up_encryption(client, self.username, self.password)
+        _ = asyncio.run_coroutine_threadsafe(client.connect(), self.event_loop).result()
         self._server_url = server_url
         try:
             _ = asyncio.run_coroutine_threadsafe(
-                connection.load_data_type_definitions(), self.event_loop
+                client.load_data_type_definitions(), self.event_loop
             ).result()
         except Exception as exc:
             logger.warning("Exception trying load_data_type_definitions(): %s", exc)
         # Get the namespace index for the PLC's Parameter node
         try:
             self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(
-                connection.get_namespace_index(
+                client.get_namespace_index(
                     "http://boschrexroth.com/OpcUa/Parameter/Objects/"
                 ),
                 self.event_loop,
@@ -643,9 +605,9 @@ class SCU:
             logger.warning(message)
 
         try:
-            if self.namespace != "" and endpoint != "":
+            if self.namespace != "" and self.endpoint != "":
                 self.ns_idx = asyncio.run_coroutine_threadsafe(
-                    connection.get_namespace_index(self.namespace), self.event_loop
+                    client.get_namespace_index(self.namespace), self.event_loop
                 ).result()
             else:
                 # Force namespace index for first physical controller
@@ -654,47 +616,44 @@ class SCU:
             namespaces = None
             try:
                 namespaces = asyncio.run_coroutine_threadsafe(
-                    connection.get_namespace_array(), self.event_loop
+                    client.get_namespace_array(), self.event_loop
                 ).result()
             except Exception:
                 pass
             try:
-                self.disconnect(connection)
+                self.disconnect(client)
             except Exception:
                 pass
             message = (
                 "*** Exception caught while trying to access the requested "
-                f"namespace '{self.namespace}' on the OPC UA server. Will NOT continue "
-                "with the normal operation but list the available namespaces here for "
+                f"namespace '{self.namespace}' on the OPC UA server. Will NOT continue"
+                " with the normal operation but list the available namespaces here for "
                 f"future reference:\n{namespaces}"
             )
             logger.error(message)
             # e.add_note(message)
             raise e
-        return connection
+        return client
 
-    def disconnect(self, connection=None) -> None:
+    def disconnect(self, client: Client | None = None) -> None:
         """
-        Disconnect from a connection.
+        Disconnect a client connection.
 
-        :param connection: The connection to disconnect from. If None, disconnect from
-            self.connection.
-        :type connection: object
+        :param client: The client to disconnect. If None, disconnect self.client.
+        :type client: Client
         """
-        if connection is None:
-            connection = self.connection
-            self.connection = None
-        if connection is not None:
+        if client is None:
+            client = self.client
+            self.client = None
+        if client is not None:
             _ = asyncio.run_coroutine_threadsafe(
-                connection.disconnect(), self.event_loop
+                client.disconnect(), self.event_loop
             ).result()
 
     def connection_reset(self) -> None:
-        """Reset the connection by disconnecting and reconnecting."""
+        """Reset the client by disconnecting and reconnecting."""
         self.disconnect()
-        self.connect(
-            self.host, self.port, self.endpoint, self.timeout, encryption=False
-        )
+        self.connect()
 
     def is_connected(self) -> bool:
         """
@@ -703,7 +662,7 @@ class SCU:
         :return: True if the SCU has a connection, False otherwise.
         :rtype: bool
         """
-        return self.connection is not None
+        return self.client is not None
 
     def take_authority(self, user: str | int) -> tuple[int, str]:
         """
@@ -714,23 +673,28 @@ class SCU:
         :return: The result of the command execution.
         :rtype: tuple[int, str]
         """
-        if self._user is None and self._session_id is None:
-            self._user = (
-                self.convert_enum_to_int("DscCmdAuthorityType", user)
-                if isinstance(user, str)
-                else user
-            )
-            code, msg, vals = self.commands["CommandArbiter.Commands.TakeAuth"](
-                self._user
+        user_int = (
+            self.convert_enum_to_int("DscCmdAuthorityType", user)
+            if isinstance(user, str)
+            else user
+        )
+        if user_int == 2:  # HHP
+            code = -1
+            msg = "DiSQ-SCU cannot take authority as HHP user"
+            logger.info("TakeAuth command not executed, as %s", msg)
+        elif self._user is None or (self._user is not None and self._user < user_int):
+            code, msg, vals = self.commands[Command.TAKE_AUTH.value](
+                ua.UInt16(user_int)
             )
             if code == 10:  # CommandDone
+                self._user = user_int
                 self._session_id = ua.UInt16(vals[0])
             else:
-                self._user = None
                 logger.error("TakeAuth command failed with message '%s'", msg)
         else:
+            user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
             code = -1
-            msg = f"DiSQ already has command authority with user {self._user}"
+            msg = f"DiSQ-SCU already has command authority with user {user_str}"
             logger.info("TakeAuth command not executed, as %s", msg)
         return code, msg
 
@@ -742,19 +706,28 @@ class SCU:
         :rtype: tuple[int, str]
         """
         if self._user is not None and self._session_id is not None:
-            code, msg, _ = self.commands["CommandArbiter.Commands.ReleaseAuth"](
-                self._user if self.namespace == "CETC54" else ua.UInt16(self._user)
+            code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
+                ua.UInt16(self._user)
             )
             if code == 10:  # CommandDone
-                self._user = None
-                self._session_id = None
+                self._user, self._session_id = None, None
+            elif code in [0, 4]:  # NoCmdAuth, CommandFailed
+                user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                logger.info(
+                    "DiSQ-SCU has already lost command authority as user '%s' to "
+                    "another client.",
+                    user,
+                )
+                self._user, self._session_id = None, None
         else:
             code = -1
-            msg = "DiSQ has no command authority to release."
+            msg = "DiSQ-SCU has no command authority to release."
             logger.info(msg)
         return code, msg
 
-    def convert_enum_to_int(self, enum_type: str, name: str) -> int | ua.UInt16 | None:
+    def convert_enum_to_int(
+        self, enum_type: str, name: str
+    ) -> ua.UInt16 | ua.Int32 | None:
         """
         Convert the name (string) of the given enumeration type to an integer value.
 
@@ -767,16 +740,38 @@ class SCU:
         """
         try:
             value = getattr(ua, enum_type)[name]
-            if self.namespace == "CETC54":  # TODO: Remove when simulator is fixed
-                return value
             integer = value.value if isinstance(value, Enum) else value
             return ua.UInt16(integer)
+        except KeyError:
+            logger.error("'%s' enum does not have '%s key!", enum_type, name)
+            return None
         except AttributeError:
             logger.error("OPC-UA server has no '%s' enum!", enum_type)
             return None
 
+    def convert_int_to_enum(self, enum_type: str, value: int) -> str | int:
+        """
+        Convert the integer value of the given enumeration type to its name (string).
+
+        :param enum_type: the name of the enumeration type to use.
+        :type enum_type: str
+        :param value: of enum to convert.
+        :type value: int
+        :return: enum name, or the original integer value if the type does not exist.
+        :rtype: str | int
+        """
+        try:
+            return (
+                str(getattr(ua, enum_type)(value).name)
+                if hasattr(ua, enum_type)
+                else value
+            )
+        except ValueError:
+            logger.error("%s is not a valid '%s' enum value!", value, enum_type)
+            return value
+
     @cached_property
-    def opcua_enum_types(self) -> dict:
+    def opcua_enum_types(self) -> dict[str, Type[Enum]]:
         """
         Retrieve a dictionary of OPC-UA enum types.
 
@@ -807,7 +802,7 @@ class SCU:
                 result.update({type_name: getattr(ua, type_name)})
             except AttributeError:
                 try:
-                    enum_node = self.connection.get_node(
+                    enum_node = self.client.get_node(
                         f"ns={self.ns_idx};s=@{type_name}.EnumValues"
                     )
                     enum_dict = self._create_enum_from_node(type_name, enum_node)
@@ -863,7 +858,7 @@ class SCU:
         )
         uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
 
-        def fn(*args) -> tuple[int, str, list[int | None] | None]:
+        def fn(*args: Any) -> CmdReturn:
             """
             Execute function with arguments and return tuple with return code/message.
 
@@ -905,6 +900,14 @@ class SCU:
                     return_msg = str(ua.CmdResponseType(return_code).name)
                 else:
                     return_msg = str(return_code)
+                if return_code == 0:  # NoCmdAuth
+                    user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                    logger.info(
+                        "DiSQ-SCU has lost command authority as user '%s' to "
+                        "another client.",
+                        user,
+                    )
+                    self._user, self._session_id = None, None
                 return (return_code, return_msg, return_vals)
             except Exception as e:
                 # e.add_note(f'Command: {uid} args: {args}')
@@ -1002,10 +1005,10 @@ class SCU:
             ) = self.generate_node_dicts_from_cache(
                 cached_nodes["node_ids"], top_node_name
             )
-            self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
+            self._plc_prg_nodes_timestamp: str = cached_nodes["timestamp"]
         else:
             plc_prg = asyncio.run_coroutine_threadsafe(
-                self.connection.nodes.objects.get_child(
+                self.client.nodes.objects.get_child(
                     [
                         f"{self.ns_idx}:Logic",
                         f"{self.ns_idx}:Application",
@@ -1043,7 +1046,7 @@ class SCU:
                 )
             else:
                 parameter = asyncio.run_coroutine_threadsafe(
-                    self.connection.nodes.objects.get_child(
+                    self.client.nodes.objects.get_child(
                         [f"{self.parameter_ns_idx}:{top_node_name}"]
                     ),
                     self.event_loop,
@@ -1072,7 +1075,7 @@ class SCU:
                     cached_nodes["node_ids"], top_node_name
                 )
             else:
-                server = self.connection.get_root_node()
+                server = self.client.get_root_node()
                 (
                     self.server_nodes,
                     self.server_attributes,
@@ -1102,7 +1105,7 @@ class SCU:
         commands = {}
         for node_name, tup in cache_dict.items():
             node_id, node_class = tup
-            node = self.connection.get_node(node_id)
+            node = self.client.get_node(node_id)
             nodes[node_name] = (node, node_class)
             if node_class == 2:
                 # An attribute. Add it to the attributes dict.
@@ -1173,11 +1176,17 @@ class SCU:
         :rtype: tuple
         :raises: No specific exceptions raised.
         """
-        name = (
-            asyncio.run_coroutine_threadsafe(node.read_browse_name(), self.event_loop)
-            .result()
-            .Name
-        )
+        try:
+            name: str = node.nodeid.Identifier.split(node_name_separator)[-1]
+        except AttributeError:
+            name = (
+                asyncio.run_coroutine_threadsafe(
+                    node.read_browse_name(), self.event_loop
+                )
+                .result()
+                .Name
+            )
+
         ancestors = []
         if parent_names is not None:
             for p_name in parent_names:
@@ -1186,7 +1195,11 @@ class SCU:
         if name != "PLC_PRG":
             ancestors.append(name)
 
-        node_name = node_name_separator.join(ancestors)
+        try:
+            node_name = node_name_separator.join(ancestors)
+        except Exception:
+            logger.exception("Invalid node for: %s", ancestors)
+            return ("", [""])
 
         return (node_name, ancestors)
 
@@ -1209,9 +1222,9 @@ class SCU:
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
         :rtype: tuple
         """
-        nodes = {}
-        attributes = {}
-        commands = {}
+        nodes: NodeDict = {}
+        attributes: AttrDict = {}
+        commands: CmdDict = {}
         node_name, ancestors = self.generate_full_node_name(node, parent_names)
         # Do not add the InputArgument and OutputArgument nodes.
         if (
@@ -1233,7 +1246,7 @@ class SCU:
             children = asyncio.run_coroutine_threadsafe(
                 node.get_children(), self.event_loop
             ).result()
-            child_nodes = {}
+            child_nodes: NodeDict = {}
             for child in children:
                 child_nodes, child_attributes, child_commands = self.get_sub_nodes(
                     child, parent_names=ancestors
@@ -1369,7 +1382,7 @@ class SCU:
         elif isinstance(attribute, ua.uatypes.NodeId):
             dt_id = attribute
 
-        dt_node = self.connection.get_node(dt_id)
+        dt_node = self.client.get_node(dt_id)
         dt_node_info = asyncio.run_coroutine_threadsafe(
             dt_node.read_browse_name(), self.event_loop
         ).result()
@@ -1448,7 +1461,7 @@ class SCU:
         elif isinstance(enum_node, ua.uatypes.NodeId):
             dt_id = enum_node
 
-        dt_node = self.connection.get_node(dt_id)
+        dt_node = self.client.get_node(dt_id)
         dt_node_def = asyncio.run_coroutine_threadsafe(
             dt_node.read_data_type_definition(), self.event_loop
         ).result()
@@ -1467,7 +1480,7 @@ class SCU:
         self,
         attributes: str | list[str],
         period: int = 100,
-        data_queue: queue.Queue = None,
+        data_queue: queue.Queue | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1504,7 +1517,7 @@ class SCU:
                 missing_nodes,
             )
         subscription = asyncio.run_coroutine_threadsafe(
-            self.connection.create_subscription(period, subscription_handler),
+            self.client.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
         handles = []
@@ -1562,7 +1575,7 @@ class SCU:
             values.append(self.subscription_queue.get(block=False, timeout=0.1))
         return values
 
-    def load_track_table_file(self, file_name: str) -> numpy.array:
+    def load_track_table_file(self, file_name: str) -> numpy.ndarray:
         """
         Load a track table file to upload with the load_program_track command.
 
@@ -1605,7 +1618,8 @@ class SCU:
         # pylint: disable=no-member
         positions = self.load_track_table_file(file_name)
         # Reset the currently loaded track table.
-        self.load_program_track(ua.LoadModeType.Reset, 0, [0.0], [0.0], [0.0])
+        zero = numpy.zeros(1)
+        self.load_program_track(ua.LoadModeType.Reset, 0, zero, zero, zero)
         # Submit the new track table.
         self.load_program_track(
             ua.LoadModeType.New,
@@ -1615,150 +1629,17 @@ class SCU:
             positions[:, 2],
         )
 
-    # TODO: Code below not used by DiSQ, so ignore most pylint rules
-    # pylint: disable=invalid-name,assignment-from-none,reimported,unspecified-encoding
-    # pylint: disable=unused-argument,dangerous-default-value
-    # pylint: disable=logging-too-many-args,logging-fstring-interpolation,useless-return
-    # pylint: disable=unreachable,pointless-string-statement,redefined-outer-name
-    # pylint: disable=inconsistent-return-statements,no-else-return,consider-using-with
-    # pylint: disable=consider-using-enumerate,import-outside-toplevel
-
-    # Direct SCU webapi functions based on urllib PUT/GET
-    def feedback(self, r):
-        """
-        This function logs feedback information and returns.
-
-        This function logs the request URL, request body, reason, status code, text
-        returned if debug mode is enabled or if the status code is not 200.
-
-        :param r: The response object.
-        :type r: Response object
-        """
-        logger.error("Not implemented because this function is not needed.")
-        return
-        # if self.debug == True:
-        #     logger.info("***Feedback:", r.request.url, r.request.body)
-        #     logger.info(r.reason, r.status_code)
-        #     logger.info("***Text returned:")
-        #     logger.info(r.text)
-        # elif r.status_code != 200:
-        #     logger.info("***Feedback:", r.request.url, r.request.body)
-        #     logger.info(r.reason, r.status_code)
-        #     logger.info("***Text returned:")
-        #     logger.info(r.text)
-        #     # logger.info(r.reason, r.status_code)
-        #     # logger.info()
-
-    # 	def scu_get(device, params = {}, r_ip = self.ip, r_port = port):
-    def scu_get(self, device, params={}):
-        """
-        Perform a GET request to a specified device on the SCU.
-
-        :param device: The device to send the GET request to.
-        :type device: str
-        :param params: Parameters to include in the GET request (default is an empty
-            dictionary).
-        :type params: dict
-        :return: The response from the GET request.
-        :rtype: requests.Response object
-        """
-        logger.error("Not implemented because this function is not needed.")
-        return
-        # """This is a generic GET command into http: scu port + folder
-        # with params=payload"""
-        # URL = "http://" + self.ip + ":" + self.port + device
-        # r = requests.get(url=URL, params=params)
-        # self.feedback(r)
-        # return r
-
-    def scu_put(self, device, payload={}, params={}, data=""):
-        """
-        Perform a PUT request to a specific device on the SCU.
-
-        :param device: The device endpoint to send the PUT request.
-        :type device: str
-        :param payload: The JSON data to send in the PUT request.
-        :type payload: dict
-        :param params: The parameters to include in the PUT request.
-        :type params: dict
-        :param data: Additional data to include in the PUT request.
-        :type data: str
-        :return: Response object from the PUT request.
-        :rtype: requests.Response
-        """
-        logger.error("Not implemented because this function is not needed.")
-        return
-        # """This is a generic PUT command into http: scu port + folder
-        # with json=payload"""
-        # URL = "http://" + self.ip + ":" + self.port + device
-        # r = requests.put(url=URL, json=payload, params=params, data=data)
-        # self.feedback(r)
-        # return r
-
-    def scu_delete(self, device, payload={}, params={}):
-        """
-        Send a DELETE request to a specific device.
-
-        :param device: The device to send the DELETE request to.
-        :type device: str
-        :param payload: The payload data to send in the request.
-        :type payload: dict
-        :param params: The parameters to include in the request.
-        :type params: dict
-        :return: The response object from the DELETE request.
-        :rtype: requests.models.Response
-        """
-        logger.error("Not implemented because this function is not needed.")
-        return
-        # """This is a generic DELETE command into http: scu port + folder
-        # with params=payload"""
-        # URL = "http://" + self.ip + ":" + self.port + device
-        # r = requests.delete(url=URL, json=payload, params=params)
-        # self.feedback(r)
-        # return r
-
-    # SIMPLE PUTS
-
-    def command_authority(self, action: bool = None, username: str = ""):
-        """
-        Check and execute a command based on the specified action and username.
-
-        :param action: A boolean value representing the action to be performed.
-        :type action: bool
-        :param username: The username of the user requesting the action.
-        :type username: str
-        :return: The result of the command execution.
-        :rtype: result type
-        :raises KeyError: If the action provided is not valid.
-        """
-        # TODO: authority not defined!
-        # if action not in authority:
-        #   logger.error("command_authority requires the action to be Get or Release!")
-        #   return
-        if len(username) <= 0:
-            logger.error(
-                "command_authority command requires a user as second parameter!"
-            )
-            return
-        # 1 get #2 release
-        logger.info("command authority: ", action)
-        authority = {"Get": True, "Release": False}
-        return self.commands["CommandArbiter.TakeReleaseAuth"](
-            authority[action], username
-        )
-
     # commands to DMC state - dish management controller
-    def interlock_acknowledge_dmc(self):
+    def interlock_acknowledge_dmc(self) -> CmdReturn:
         """
         Acknowledge the interlock status for the DMC.
 
         :return: The result of acknowledging the interlock status for the DMC.
-        :rtype: unknown
         """
         logger.info("acknowledge dmc")
-        return self.commands["Safety.InterlockAck"]()
+        return self.commands[Command.INTERLOCK_ACK.value]()
 
-    def reset_dmc(self, axis: int = None):
+    def reset_dmc(self, axis: int = None) -> CmdReturn:
         """
         Reset the DMC (Device Motion Controller) for a specific axis.
 
@@ -1767,7 +1648,6 @@ class SCU:
             EL. Defaults to None.
         :type axis: int
         :return: The result of resetting the DMC for the specified axis.
-        :rtype: str
         :raises ValueError: If the axis parameter is not provided.
         """
         logger.info("reset dmc")
@@ -1776,45 +1656,45 @@ class SCU:
                 "reset_dmc requires an axis as parameter! Try one "
                 "of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
             )
-        return self.commands["Management.Reset"](axis)
+            raise ValueError
+        return self.commands[Command.RESET.value](axis)
 
-    def activate_dmc(self, axis: int = None):
+    def activate_dmc(self, axis: int = None) -> CmdReturn:
         """
         Activate the DMC (Digital Motion Controller) for a specific axis.
 
         :param axis: The axis for which to activate the DMC (0=AZ, 1=EL, 2=FI, 3=AZ&EL).
         :type axis: int
         :return: The result of activating the DMC for the specified axis.
-        :rtype: unknown (depends on the implementation of
-            self.commands['Management.Activate'])
         :raises ValueError: If the axis parameter is None.
         """
         logger.info("activate dmc")
         if axis is None:
             logger.error(
-                "activate_dmc requires now an axis as parameter! "
+                "activate_dmc requires an axis as parameter! "
                 "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
             )
-            return
-        return self.commands["Management.Activate"](axis)
+            raise ValueError
+        return self.commands[Command.ACTIVATE.value](axis)
 
-    def deactivate_dmc(self, axis: int = None):
+    def deactivate_dmc(self, axis: int = None) -> CmdReturn:
         """
         Deactivate a specific axis of the DMC controller.
 
         :param axis: The axis to deactivate (0=AZ, 1=EL, 2=FI, 3=AZ&EL).
         :type axis: int, optional
+        :raises ValueError: If the axis parameter is None.
         """
         logger.info("deactivate dmc")
         if axis is None:
             logger.error(
-                "deactivate_dmc requires now an axis as parameter! "
+                "deactivate_dmc requires an axis as parameter! "
                 "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
             )
-            return
-        return self.commands["Management.DeActivate"](axis)
+            raise ValueError
+        return self.commands[Command.DEACTIVATE.value](axis)
 
-    def move_to_band(self, position):
+    def move_to_band(self, position: str | int) -> CmdReturn:
         """
         Move the system to a specified band.
 
@@ -1822,7 +1702,6 @@ class SCU:
             numerical value.
         :type position: str or int
         :return: The result of moving to the specified band.
-        :rtype: Depends on the specific implementation.
         :raises KeyError: If the specified band is not found in the bands dictionary.
         """
         bands = {
@@ -1834,15 +1713,18 @@ class SCU:
             "Band 5b": 6,
             "Band 5c": 7,
         }
-        logger.info("move to band:", position)
+        logger.info("move to band: %s", position)
         if not isinstance(position, str):
-            return self.commands["Management.Move2Band"](position)
-        else:
-            return self.commands["Management.Move2Band"](bands[position])
+            return self.commands[Command.MOVE2BAND.value](position)
+        return self.commands[Command.MOVE2BAND.value](bands[position])
 
     def abs_azel(
-        self, az_angle, el_angle, az_velocity: float = None, el_velocity: float = None
-    ):
+        self,
+        az_angle: float,
+        el_angle: float,
+        az_velocity: float = None,
+        el_velocity: float = None,
+    ) -> CmdReturn:
         """
         Calculate and move the telescope to an absolute azimuth and elevation position.
 
@@ -1858,20 +1740,20 @@ class SCU:
         """
         if az_velocity is None or el_velocity is None:
             logger.error(
-                "abs_azel requires now the velocities for az and el "
+                "abs_azel requires the velocities for az and el "
                 "as third and fourth parameters!"
             )
-            return
+            raise ValueError
         logger.info(
             f"abs az: {az_angle:.4f} el: {el_angle:.4f}, "
             f"az velocity: {az_velocity:.4f}, el velocity: {el_velocity:.4f}"
         )
-        return self.commands["Management.Slew2AbsAzEl"](
+        return self.commands[Command.SLEW2ABS_AZ_EL.value](
             az_angle, el_angle, az_velocity, el_velocity
         )
 
     # commands to ACU
-    def activate_az(self):
+    def activate_az(self) -> CmdReturn:
         """
         Activate the azimuth functionality.
 
@@ -1879,12 +1761,11 @@ class SCU:
         parameter of 0.
 
         :return: The result of activating the azimuth functionality.
-        :rtype: unknown
         """
         logger.info("activate azimuth")
         return self.activate_dmc(0)
 
-    def deactivate_az(self):
+    def deactivate_az(self) -> CmdReturn:
         """
         Deactivate azimuth functionality.
 
@@ -1895,49 +1776,45 @@ class SCU:
         logger.info("deactivate azimuth")
         return self.deactivate_dmc(0)
 
-    def activate_el(self):
+    def activate_el(self) -> CmdReturn:
         """
         Activate the elevation.
 
         :return: The result of activating elevation.
-        :rtype: int
         """
         logger.info("activate elevation")
         return self.activate_dmc(1)
 
-    def deactivate_el(self):
+    def deactivate_el(self) -> CmdReturn:
         """
         Deactivate elevation.
 
         This method deactivates elevation.
 
         :return: The result of deactivating elevation.
-        :rtype: int
         """
         logger.info("deactivate elevation")
         return self.deactivate_dmc(1)
 
-    def activate_fi(self):
+    def activate_fi(self) -> CmdReturn:
         """
         Activate the feed indexer.
 
         :return: The result of activating the feed indexer.
-        :rtype: Whatever type the activate_dmc method returns.
         """
         logger.info("activate feed indexer")
         return self.activate_dmc(2)
 
-    def deactivate_fi(self):
+    def deactivate_fi(self) -> CmdReturn:
         """
         Deactivate the feed indexer.
 
         :return: The result of deactivating the feed indexer.
-        :rtype: unknown
         """
         logger.info("deactivate feed indexer")
         return self.deactivate_dmc(2)
 
-    def abs_azimuth(self, az_angle, az_vel):
+    def abs_azimuth(self, az_angle: float, az_vel: float) -> CmdReturn:
         """
         Calculate the absolute azimuth based on azimuth angle and azimuth velocity.
 
@@ -1945,13 +1822,12 @@ class SCU:
         :type az_angle: float
         :param az_vel: The azimuth velocity value.
         :type az_vel: float
-        :return: The absolute azimuth calculated.
-        :rtype: float
+        :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
-        return self.commands["Management.Slew2AbsSingleAx"](0, az_angle, az_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](0, az_angle, az_vel)
 
-    def abs_elevation(self, el_angle, el_vel):
+    def abs_elevation(self, el_angle: float, el_vel: float) -> CmdReturn:
         """
         Calculate the absolute elevation angle and velocity.
 
@@ -1959,13 +1835,12 @@ class SCU:
         :type el_angle: float
         :param el_vel: The elevation velocity.
         :type el_vel: float
-        :return: The result of the Management.Slew2AbsSingleAx command.
-        :rtype: unknown
+        :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
-        return self.commands["Management.Slew2AbsSingleAx"](1, el_angle, el_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](1, el_angle, el_vel)
 
-    def abs_feed_indexer(self, fi_angle, fi_vel):
+    def abs_feed_indexer(self, fi_angle: float, fi_vel: float) -> CmdReturn:
         """
         Calculate the absolute feed indexer value.
 
@@ -1973,38 +1848,32 @@ class SCU:
         :type fi_angle: float
         :param fi_vel: The velocity value for the feed indexer.
         :type fi_vel: float
-        :return: The result of the feed indexer operation.
-        :rtype: float
+        :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
-        return self.commands["Management.Slew2AbsSingleAx"](2, fi_angle, fi_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](2, fi_angle, fi_vel)
 
-    def load_static_offset(self, az_offset, el_offset):
+    def load_static_offset(self, az_offset: float, el_offset: float) -> CmdReturn:
         """
         Load static azimuth and elevation offsets for tracking.
 
         :param az_offset: The azimuth offset value.
         :type az_offset: float
-
         :param el_offset: The elevation offset value.
         :type el_offset: float
-
         :return: The result of loading the static offsets.
-        :rtype: type returned by self.commands['Tracking.TrackLoadStaticOff']
-
-        This function logs the provided azimuth and elevation offsets before loading
-        them.
-
-        Example usage:
-
-        .. code-block:: python
-
-            load_static_offset(0.1, 0.2)
         """
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
-        return self.commands["Tracking.TrackLoadStaticOff"](az_offset, el_offset)
+        return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](az_offset, el_offset)
 
-    def load_program_track(self, load_type, entries, t, az, el) -> None:
+    def load_program_track(
+        self,
+        load_type: str,
+        entries: int,
+        t: numpy.ndarray,
+        az: numpy.ndarray,
+        el: numpy.ndarray,
+    ) -> CmdReturn:
         """
         Load a program track with provided entries, time offsets, azimuth and elevation.
 
@@ -2013,11 +1882,11 @@ class SCU:
         :param entries: Number of entries in the track table.
         :type entries: int
         :param t: List of time offset values.
-        :type t: list
+        :type t: numpy.ndarray
         :param az: List of azimuth values.
-        :type az: list
+        :type az: numpy.ndarray
         :param el: List of elevation values.
-        :type el: list
+        :type el: numpy.ndarray
         :raises IndexError: If the provided track table contents are not aligned.
         """
         logger.info("%s", load_type)
@@ -2070,13 +1939,13 @@ class SCU:
         # Format the track table in the new way that preceeds every row with
         # its row number.
         table = ""
-        for index in range(len(t)):
+        for index in range(len(t)):  # pylint: disable=consider-using-enumerate
             row = f"{index:03d}:{t[index]},{az[index]},{el[index]};"
             table += row
         logger.debug(f"Track table that will be sent to DS: {table}")
         byte_string = table.encode()
         try:
-            return self.commands["Tracking.TrackLoadTable"](
+            return self.commands[Command.TRACK_LOAD_TABLE.value](
                 load_type,
                 ua.UInt16(entries),
                 ua.ByteString(byte_string),
@@ -2098,7 +1967,7 @@ class SCU:
         logger.debug(f"Track table that will be sent to DS: {table}")
         byte_string = table.encode()
         try:
-            return self.commands["Tracking.TrackLoadTable"](
+            return self.commands[Command.TRACK_LOAD_TABLE.value](
                 load_type,
                 ua.UInt16(entries),
                 ua.ByteString(byte_string),
@@ -2111,7 +1980,9 @@ class SCU:
             )
             raise e
 
-    def start_program_track(self, start_time, start_restart_or_stop: bool = True):
+    def start_program_track(
+        self, start_time: datetime.datetime, start_restart_or_stop: bool = True
+    ) -> CmdReturn:
         # unused
         # ptrackA = 11
         # interpol_modes
@@ -2130,13 +2001,14 @@ class SCU:
             stop tracking. Defaults to True (start).
         :type start_restart_or_stop: bool
         :return: The result of starting the program track.
-        :rtype: Any
         """
-        return self.commands["Tracking.TrackStart"](
+        return self.commands[Command.TRACK_START.value](
             1, start_time, start_restart_or_stop
         )
 
-    def acu_ska_track(self, number_of_entries: int = None, body: bytes = None):
+    def acu_ska_track(
+        self, number_of_entries: int = None, body: bytes = None
+    ) -> CmdReturn:
         """
         ACU SKA track.
 
@@ -2148,30 +2020,19 @@ class SCU:
         logger.info("acu ska track")
         if number_of_entries is None:
             logger.error(
-                "acu_ska_track requires now as first parameter the "
-                "number of entries!"
+                "acu_ska_track requires as first parameter the number of entries!"
             )
-            return
-        self.commands["Tracking.TrackLoadTable"](0, number_of_entries, body)
+            raise ValueError
+        return self.commands[Command.TRACK_LOAD_TABLE.value](0, number_of_entries, body)
 
-    def acu_ska_track_stoploadingtable(self):
-        """
-        Stop loading table track.
-
-        This function is not implemented because the function "stopLoadingTable" is not
-        supported by the OPC UA server.
-        """
-        logger.error(
-            "Not implemented because the function "
-            '"stopLoadingTable" is not supported by the OPC UA '
-            "server."
-        )
-        return
-        # self.scu_put('/acuska/stopLoadingTable')
-
-    def format_tt_line(
-        self, t, az, el, capture_flag: int = 1, parallactic_angle: float = 0.0
-    ):
+    def _format_tt_line(
+        self,
+        t: float,
+        az: float,
+        el: float,
+        capture_flag: int = 1,
+        parallactic_angle: float = 0.0,
+    ) -> str:
         """
         Something will provide a time, az, and el as minimum.
 
@@ -2184,7 +2045,7 @@ class SCU:
         )
         return f_str
 
-    def format_body(self, t, az, el):
+    def _format_body(self, t: list[float], az: list[float], el: list[float]) -> str:
         """
         Format the body of a message with timestamp, azimuth, and elevation values.
 
@@ -2198,412 +2059,6 @@ class SCU:
         :rtype: str
         """
         body = ""
-        for i in range(len(t)):
-            body += self.format_tt_line(t[i], az[i], el[i])
+        for i in range(len(t)):  # pylint: disable=consider-using-enumerate
+            body += self._format_tt_line(t[i], az[i], el[i])
         return body
-
-    # status get functions goes here
-
-    def status_Value(self, sensor):  # noqa: N802
-        """
-        Get the value of a specific sensor from the attributes dictionary.
-
-        :param self: The object instance.
-        :param sensor: The key identifying the specific sensor.
-        :type sensor: str
-        :return: The value of the specified sensor.
-        :rtype: any
-        """
-        return self.attributes[sensor].value
-
-    def status_finalValue(self, sensor):  # noqa: N802
-        """
-        Return the final value status of a sensor.
-
-        :param sensor: The sensor for which to get the final value status.
-        :type sensor: str
-        """
-        logger.error(
-            "Not implemented because the function "
-            '"finalValue" is not supported by the OPC UA '
-            "server."
-        )
-        return
-        # return self.status_Value(sensor)
-        # r = self.scu_get('/devices/statusValue',
-        #       {'path': sensor})
-        # data = r.json()['finalValue']
-        # logger.info('finalValue: ', data)
-        # return data
-
-    def commandMessageFields(self, commandPath):  # noqa: N802,N803
-        """
-        Generate message fields for a specific command path.
-
-        :param commandPath: The specific path for the command.
-        :type commandPath: str
-        """
-        logger.error(
-            "Not implemented because the function "
-            '"commandMessageFields" is not supported by the OPC UA '
-            "server."
-        )
-        return
-        # r = self.scu_get('/devices/commandMessageFields',
-        #       {'path': commandPath})
-        # return r
-
-    def statusMessageField(self, statusPath):  # noqa: N802,N803
-        """
-        Retrieve the status message field.
-
-        :param statusPath: The path to the status message field.
-        :type statusPath: str
-        """
-        logger.error(
-            "Not implemented because the function "
-            '"statusMessageFields" is not supported by the OPC UA '
-            "server."
-        )
-        return
-        # r = self.scu_get('/devices/statusMessageFields',
-        #       {'deviceName': statusPath})
-        # return r
-
-    # ppak added 1/10/2020 as debug for onsite SCU version
-    # but only info about sensor, value itself is murky?
-    def field(self, sensor):
-        """
-        Return data for a specific sensor field.
-
-        :param sensor: The name of the sensor field to retrieve data for.
-        :type sensor: str
-        :return: Data for the specified sensor field.
-        :rtype: dict
-        """
-        logger.error(
-            'Not implemented because the function "field" is not '
-            "supported by the OPC UA server."
-        )
-        return
-        # old field method still used on site
-        r = self.scu_get("/devices/field", {"path": sensor})
-        # data = r.json()['value']
-        data = r.json()
-        return data
-
-    # logger functions goes here
-
-    def create_logger(self, config_name, sensor_list):
-        """
-        PUT create a config for logging.
-
-        Usage:
-        create_logger('HN_INDEX_TEST', hn_feed_indexer_sensors)
-        or
-        create_logger('HN_TILT_TEST', hn_tilt_sensors)
-        """
-        logger.info("create logger")
-        r = self.scu_put(
-            "/datalogging/config", {"name": config_name, "paths": sensor_list}
-        )
-        return r
-
-    """unusual does not take json but params"""
-
-    def start_logger(self, filename):
-        """
-        Start logging data to a specified file.
-
-        :param filename: The name of the file to log data to.
-        :type filename: str
-        :return: Response from the server.
-        :rtype: str
-        """
-        logger.info("start logger: ", filename)
-        r = self.scu_put("/datalogging/start", params="configName=" + filename)
-        return r
-
-    def stop_logger(self):
-        """
-        Stop the data logging process.
-
-        :return: The response from stopping the data logging.
-        :rtype: Depends on the response from the SCU.
-        """
-        logger.info("stop logger")
-        r = self.scu_put("/datalogging/stop")
-        return r
-
-    def logger_state(self):
-        #        logger.info('logger state ')
-        """
-        Get the current state of the logger.
-
-        :return: The current state of the logger.
-        :rtype: str
-        """
-        r = self.scu_get("/datalogging/currentState")
-        # logger.info(r.json()['state'])
-        return r.json()["state"]
-
-    def logger_configs(self):
-        """
-        Get logger configurations.
-
-        :return: The logger configurations.
-        :rtype: dict
-        """
-        logger.info("logger configs ")
-        r = self.scu_get("/datalogging/configs")
-        return r
-
-    def last_session(self):
-        """GET last session."""
-        logger.info("Last sessions ")
-        r = self.scu_get("/datalogging/lastSession")
-        session = r.json()["uuid"]
-        return session
-
-    def logger_sessions(self):
-        """GET all sessions."""
-        logger.info("logger sessions ")
-        r = self.scu_get("/datalogging/sessions")
-        return r
-
-    def session_query(self, uid):
-        """
-        GET specific session only - specified by uid number.
-
-        Usage:
-            session_query('16')
-        """
-        logger.info("logger sessioN query uid ")
-        r = self.scu_get("/datalogging/session", {"uid": uid})
-        return r
-
-    def session_delete(self, uid):
-        """
-        DELETE specific session only - specified by uid number.
-
-        Not working - returns response 500
-        Usage:
-        session_delete('16')
-        """
-        logger.info("delete session ")
-        r = self.scu_delete("/datalogging/session", params="uid=" + uid)
-        return r
-
-    def session_rename(self, uid, new_name):
-        """
-        RENAME specific session only - specified by uid number and new session name.
-
-        Not working
-        Works in browser display only, reverts when browser refreshed!
-        Usage:
-        session_rename('16','koos')
-        """
-        logger.info("rename session ")
-        r = self.scu_put("/datalogging/session", params={"uid": uid, "name": new_name})
-        return r
-
-    def export_session(self, uid, interval_ms=1000):
-        """
-        EXPORT specific session.
-
-        By uid and with interval output r.text could be directed to be saved to file.
-
-        Usage:
-        export_session('16',1000)
-        or export_session('16',1000).text
-        """
-        logger.info("export session ")
-        r = self.scu_get(
-            "/datalogging/exportSession",
-            params={"uid": uid, "interval_ms": interval_ms},
-        )
-        return r
-
-    # sorted_sessions not working yet
-
-    def sorted_sessions(
-        self,
-        is_descending="True",
-        start_value="1",
-        end_value="25",
-        sort_by="Name",
-        filter_type="indexSpan",
-    ):
-        """
-        Retrieve a sorted list of sessions from the data logging endpoint.
-
-        :param is_descending: Flag to specify whether the sorting should be descending
-            or ascending. Default is descending.
-        :type is_descending: str
-        :param start_value: Starting value for the sorting range. Default is 1.
-        :type start_value: str
-        :param end_value: Ending value for the sorting range. Default is 25.
-        :type end_value: str
-        :param sort_by: Field to sort by. Default is 'Name'.
-        :type sort_by: str
-        :param filter_type: Type of filtering to apply. Default is 'indexSpan'.
-        :type filter_type: str
-        :return: A sorted list of sessions based on the specified parameters.
-        :rtype: dict
-        """
-        logger.info("sorted sessions")
-        r = self.scu_get(
-            "/datalogging/sortedSessions",
-            {
-                "isDescending": is_descending,
-                "startValue": start_value,
-                "endValue": end_value,
-                "filterType": filter_type,  # STRING - indexSpan|timeSpan,
-                "sortBy": sort_by,
-            },
-        )
-        return r
-
-    # get latest session
-    def save_session(self, filename, interval_ms=1000, session="last"):
-        """
-        Save session data as CSV after EXPORTing it.
-
-        Default interval is 1s. Default is last recorded session if specified no error
-        checking to see if it exists.
-
-        Usage:
-            export_session('16',1000)
-            or export_session('16',1000).text
-        """
-        from pathlib import Path
-
-        logger.info(
-            "Attempt export and save of session: %s at rate %d ms", session, interval_ms
-        )
-        if session == "last":
-            # get all logger sessions, may be many
-            # r = self.logger_sessions()
-            # [-1] for end of list, and ['uuid'] to get uid of last session in list
-            session = self.last_session()
-        file_txt = self.export_session(session, interval_ms).text
-        logger.info("Session id: %s", session)
-        file_time = str(int(time.time()))
-        file_name = str(filename + "_" + file_time + ".csv")
-        file_path = Path.cwd() / "output" / file_name
-        logger.info("Log file location:", file_path)
-        f = open(file_path, "a+")
-        f.write(file_txt)
-        f.close()
-
-    # get latest session ADDED BY HENK FOR BETTER FILE NAMING FOR THE OPTICAL TESTS
-    # (USING "START" AS TIMESTAMP)
-    def save_session13(self, filename, start, interval_ms=1000, session="last"):
-        """
-        Save session data as CSV after EXPORTing it.
-
-        Default interval is 1s. Default is last recorded session if specified no error
-        checking to see if it exists.
-
-        Usage:
-            export_session('16',1000)
-            or export_session('16',1000).text
-        """
-        from pathlib import Path
-
-        logger.info(
-            "Attempt export and save of session: %s at rate %d ms", session, interval_ms
-        )
-        if session == "last":
-            # get all logger sessions, may be many
-            # r = self.logger_sessions()
-            # [-1] for end of list, and ['uuid'] to get uid of last session in list
-            session = self.last_session()
-        file_txt = self.export_session(session, interval_ms).text
-        logger.info("Session id: %s", session)
-        #        file_time = str(int(time.time()))
-        file_time = str(int(start))
-        file_name = str(filename + "_" + file_time + ".csv")
-        file_path = Path.cwd() / "output" / file_name
-        logger.info("Log file location:", file_path)
-        f = open(file_path, "a+")
-        f.write(file_txt)
-        f.close()
-
-    def save_session14(self, filename, interval_ms=1000, session="last"):
-        """
-        Save session data as CSV after EXPORTing it.
-
-        Default interval is 1s. Default is last recorded session if specified no error
-        checking to see if it exists.
-
-        Usage:
-            export_session('16',1000)
-            or export_session('16',1000).text
-        """
-        from pathlib import Path
-
-        logger.info(
-            "Attempt export and save of session: %s at rate %d ms", session, interval_ms
-        )
-        if session == "last":
-            # get all logger sessions, may be many
-            # r = self.logger_sessions()
-            session = self.last_session()
-        file_txt = self.export_session(session, interval_ms).text
-        logger.info("Session id: %s", session)
-        file_name = str(filename + ".csv")
-        file_path = Path.cwd() / "output" / file_name
-        logger.info("Log file location:", file_path)
-        f = open(file_path, "a+")
-        f.write(file_txt)
-        f.close()
-
-    # Simplified one line commands particular to test section being peformed
-
-    # wait seconds, wait value, wait finalValue
-    def wait_duration(self, seconds):
-        """
-        Wait for a specified duration in seconds.
-
-        :param seconds: The duration to wait in seconds.
-        :type seconds: float
-        """
-        logger.info(f"  wait for {seconds:.1f}s", end="")
-        time.sleep(seconds)
-        logger.info(" done *")
-
-    def wait_value(self, sensor, value):
-        """
-        Wait until a sensor reaches a specific value.
-
-        :param sensor: The sensor to monitor.
-        :type sensor: str
-        :param value: The value to wait for.
-        :type value: int
-        """
-        logger.info(f"wait until sensor: {sensor} == value {value}")
-        while self.attributes[sensor].value != value:
-            time.sleep(1)
-        logger.info(f" {sensor} done *")
-
-    def wait_finalValue(self, sensor, value):  # noqa: N802
-        """
-        Wait until the sensor reaches a specified value.
-
-        :param sensor: The sensor to monitor.
-        :type sensor: str
-        :param value: The target value for the sensor.
-        :type value: int
-        :raises: If the sensor does not reach the target value within a reasonable time.
-        """
-        logger.info(f"wait until sensor: {sensor} == value {value}")
-        while self.status_finalValue(sensor) != value:
-            time.sleep(1)
-        logger.info(f" {sensor} done *")
-
-    # Simplified track table functions
-
-
-if __name__ == "__main__":
-    logger.info("main")
