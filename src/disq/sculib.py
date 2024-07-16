@@ -392,7 +392,7 @@ class SCU:
         self._use_nodes_cache = use_nodes_cache
         self._app_name = app_name
         # Other local variables
-        self.client: Client
+        self.client: Client | None = None
         self.event_loop_thread: threading.Thread | None = None
         self.subscription_handler = None
         self.subscriptions: dict = {}
@@ -693,7 +693,7 @@ class SCU:
         :param client: The client to disconnect. If None, disconnect self.client.
         :type client: Client
         """
-        if client is None:
+        if client is None and self.client is not None:
             client = self.client
             self.client = None
         if client is not None:
