@@ -867,24 +867,22 @@ class SCU:
         :rtype: function
         """
         try:
-            call = (
-                asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop)
-                .result()
-                .call_method
-            )
+            node_parent = asyncio.run_coroutine_threadsafe(
+                node.get_parent(), event_loop
+            ).result()
+            call = node_parent.call_method
         except AttributeError as e:
             logger.warning(
                 "Caught an exception while trying to get the method for a command.\n"
                 "Exception: %s\nNode name: %s\nParent object: %s",
                 e,
                 node_name,
-                node.get_parent(),
+                node_parent,
             )
 
             def empty_func(
-                *args: Any,
+                *args: Any,  # pylint: disable=unused-argument
             ) -> CmdReturn:
-                del args
                 logger.warning("Command node %s has no method to call.", uid)
                 return -1, "No method", None
 
