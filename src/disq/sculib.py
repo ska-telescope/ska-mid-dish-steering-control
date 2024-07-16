@@ -848,11 +848,28 @@ class SCU:
         :return: A function that can be used to execute a method on the Node.
         :rtype: function
         """
-        call = (
-            asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop)
-            .result()
-            .call_method
-        )
+        try:
+            node_parent = asyncio.run_coroutine_threadsafe(
+                node.get_parent(), event_loop
+            ).result()
+            call = node_parent.call_method
+        except AttributeError as e:
+            logger.warning(
+                "Caught an exception while trying to get the method for a command.\n"
+                "Exception: %s\nNode name: %s\nParent object: %s",
+                e,
+                node_name,
+                node_parent,
+            )
+
+            def empty_func(
+                *args: Any,  # pylint: disable=unused-argument
+            ) -> CmdReturn:
+                logger.warning("Command node %s has no method to call.", uid)
+                return -1, "No method", None
+
+            return empty_func
+
         read_name = asyncio.run_coroutine_threadsafe(
             node.read_display_name(), event_loop
         )
@@ -882,7 +899,9 @@ class SCU:
                     else [*args]
                 )
                 logger.debug(
-                    "Calling command node '%s' with args list: %s", uid, cmd_args
+                    "Calling command node '%s' with args list: %s",
+                    uid,
+                    cmd_args,
                 )
                 result: int | list[Any] = asyncio.run_coroutine_threadsafe(
                     call(uid, *cmd_args), event_loop
@@ -1604,7 +1623,9 @@ class SCU:
             return numpy.array(cleaned_lines, dtype=float)
         except Exception as e:
             logger.error(
-                "Could not load or convert the track table file '%s': %s", file_name, e
+                "Could not load or convert the track table file '%s': %s",
+                file_name,
+                e,
             )
             raise e
 
