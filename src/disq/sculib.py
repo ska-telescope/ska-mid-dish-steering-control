@@ -277,27 +277,40 @@ class SCU:
 
     How to:
     - Import the library:
+
     ```
-    import sculib
+    from sculib import SCU, Command
     ```
-    - Instantiate an SCU object. I provide here the defaults which can be overwritten by
-      specifying the named parameter:
+    - Instantiate an SCU object and connect to the server. Provided here are the
+      defaults which can be overwritten by specifying the named parameter:
+
     ```
-    scu = sculib.SCU(host = 'localhost', port = 4840, endpoint = '',
-      namespace = 'http://skao.int/DS_ICD/', timeout = 10.0)
+    scu = SCU(host="localhost", port=4840, endpoint="", namespace="", timeout=10.0)
+    scu.connect_and_setup()
+    # Do things
+    scu.disconnect_and_cleanup()
     ```
-    - Done.
+    - Or altenatively SCU can be used as a context manager without calling the setup and
+      teardown methods explicitly:
+
+    ```
+    with SCU(host="localhost") as scu:
+        scu.take_authority("LMC")
+    ```
     - All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
+
     ```
     scu.get_node_list()
     ```
     - Every value in the dictionary exposes the full OPC UA functionality for a node.
       Note: When accessing nodes directly, it is mandatory to await any calls:
+
     ```
     node_name = (await (node.read_display_name()).Text
     ```
     - The methods that are below the PLC_PRG node's hierarchy can be accessed through
       the commands dictionary:
+
     ```
     scu.get_command_list()
     ```
@@ -305,28 +318,38 @@ class SCU:
       commands expects. Checking for the correctness of the parameters is not done here
       in sculib but in the PLC's OPC UA server. Once the parameters are in order,
       calling a command is really simple:
+
     ```
     result = scu.commands['COMMAND_NAME'](YOUR_PARAMETERS)
     ```
+    - You can also use the Command enum, as well as helper method for converting types
+      from the OPC UA server to the correct base integer type:
+
+    ```
+    axis = scu.convert_enum_to_int("AxisSelectType", "Az")
+    result = scu.commands[Command.ACTIVATE.value](axis)
+    ```
     - For instance, command the PLC to slew to a new position:
+
     ```
     az = 182.0; el = 21.8; az_v = 1.2; el_v = 2.1
-    result_code,result_msg = scu.commands['Management.Slew2AbsAzEl'](az, el, az_v, el_v)
+    code, msg, _ = scu.commands[Command.SLEW2ABS_AZ_EL.value](az, el, az_v, el_v)
     ```
     - The OPC UA server also provides read-writeable and read-only variables, commonly
       called in OPC UA "attributes". An attribute's value can easily be read:
+
     ```
     scu.attributes['Azimuth.p_Set'].value
     ```
     - If an attribute is writable, then a simple assignment does the trick:
+
     ```
     scu.attributes['Azimuth.p_Set'].value = 1.2345
     ```
     - In case an attribute is not writeable, the OPC UA server will report an error:
+
     ```
     scu.attributes['Azimuth.p_Set'].value = 10
-    ```
-    ```
     *** Exception caught
     "User does not have permission to perform the requested operation."
     (BadUserAccessDenied)
@@ -776,9 +799,7 @@ class SCU:
             logger.info(msg)
         return code, msg
 
-    def convert_enum_to_int(
-        self, enum_type: str, name: str
-    ) -> ua.UInt16 | ua.Int32 | None:
+    def convert_enum_to_int(self, enum_type: str, name: str) -> ua.UInt16 | None:
         """
         Convert the name (string) of the given enumeration type to an integer value.
 
@@ -1729,7 +1750,7 @@ class SCU:
                 "of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
             )
             raise ValueError
-        return self.commands[Command.RESET.value](axis)
+        return self.commands[Command.RESET.value](ua.UInt16(axis))
 
     def activate_dmc(self, axis: int = None) -> CmdReturn:
         """
@@ -1747,7 +1768,7 @@ class SCU:
                 "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
             )
             raise ValueError
-        return self.commands[Command.ACTIVATE.value](axis)
+        return self.commands[Command.ACTIVATE.value](ua.UInt16(axis))
 
     def deactivate_dmc(self, axis: int = None) -> CmdReturn:
         """
@@ -1764,7 +1785,7 @@ class SCU:
                 "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
             )
             raise ValueError
-        return self.commands[Command.DEACTIVATE.value](axis)
+        return self.commands[Command.DEACTIVATE.value](ua.UInt16(axis))
 
     def move_to_band(self, position: str | int) -> CmdReturn:
         """
@@ -1776,26 +1797,18 @@ class SCU:
         :return: The result of moving to the specified band.
         :raises KeyError: If the specified band is not found in the bands dictionary.
         """
-        bands = {
-            "Band 1": 1,
-            "Band 2": 2,
-            "Band 3": 3,
-            "Band 4": 4,
-            "Band 5a": 5,
-            "Band 5b": 6,
-            "Band 5c": 7,
-        }
         logger.info("move to band: %s", position)
-        if not isinstance(position, str):
-            return self.commands[Command.MOVE2BAND.value](position)
-        return self.commands[Command.MOVE2BAND.value](bands[position])
+        if isinstance(position, int):
+            return self.commands[Command.MOVE2BAND.value](ua.UInt16(position))
+        band = self.convert_enum_to_int("BandType", position)
+        return self.commands[Command.MOVE2BAND.value](band)
 
     def abs_azel(
         self,
         az_angle: float,
         el_angle: float,
-        az_velocity: float = None,
-        el_velocity: float = None,
+        az_velocity: float = 1.0,
+        el_velocity: float = 1.0,
     ) -> CmdReturn:
         """
         Calculate and move the telescope to an absolute azimuth and elevation position.
@@ -1808,14 +1821,7 @@ class SCU:
         :type az_velocity: float
         :param el_velocity: The elevation velocity in degrees per second.
         :type el_velocity: float
-        :raises ValueError: If az_velocity or el_velocity are not provided.
         """
-        if az_velocity is None or el_velocity is None:
-            logger.error(
-                "abs_azel requires the velocities for az and el "
-                "as third and fourth parameters!"
-            )
-            raise ValueError
         logger.info(
             f"abs az: {az_angle:.4f} el: {el_angle:.4f}, "
             f"az velocity: {az_velocity:.4f}, el velocity: {el_velocity:.4f}"
@@ -1897,7 +1903,9 @@ class SCU:
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
-        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](0, az_angle, az_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
+            ua.UInt16(0), az_angle, az_vel
+        )
 
     def abs_elevation(self, el_angle: float, el_vel: float) -> CmdReturn:
         """
@@ -1910,7 +1918,9 @@ class SCU:
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
-        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](1, el_angle, el_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
+            ua.UInt16(1), el_angle, el_vel
+        )
 
     def abs_feed_indexer(self, fi_angle: float, fi_vel: float) -> CmdReturn:
         """
@@ -1923,7 +1933,9 @@ class SCU:
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
-        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](2, fi_angle, fi_vel)
+        return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
+            ua.UInt16(2), fi_angle, fi_vel
+        )
 
     def load_static_offset(self, az_offset: float, el_offset: float) -> CmdReturn:
         """
@@ -2052,50 +2064,20 @@ class SCU:
             )
             raise e
 
-    def start_program_track(
-        self, start_time: datetime.datetime, start_restart_or_stop: bool = True
-    ) -> CmdReturn:
-        # unused
-        # ptrackA = 11
-        # interpol_modes
-        # NEWTON = 0
-        # SPLINE = 1
-        # start_track_modes
-        # AZ_EL = 1
-        # RA_DEC = 2
-        # RA_DEC_SC = 3  #shortcut
+    def start_program_track(self, interpol_mode: int) -> CmdReturn:
         """
         Start tracking a program.
 
-        :param start_time: The time at which tracking should start.
-        :type start_time: datetime
-        :param start_restart_or_stop: A boolean indicating whether to start, restart, or
-            stop tracking. Defaults to True (start).
-        :type start_restart_or_stop: bool
         :return: The result of starting the program track.
         """
-        return self.commands[Command.TRACK_START.value](
-            1, start_time, start_restart_or_stop
-        )
+        # TODO
+        return self.commands[Command.TRACK_START.value](ua.UInt16(interpol_mode))
 
-    def acu_ska_track(
-        self, number_of_entries: int = None, body: bytes = None
-    ) -> CmdReturn:
-        """
-        ACU SKA track.
-
-        :param number_of_entries: Number of entries.
-        :type number_of_entries: int
-        :param body: Body of bytes.
-        :type body: bytes
-        """
+    def acu_ska_track(self) -> CmdReturn:
+        """ACU SKA track."""
+        # TODO
         logger.info("acu ska track")
-        if number_of_entries is None:
-            logger.error(
-                "acu_ska_track requires as first parameter the number of entries!"
-            )
-            raise ValueError
-        return self.commands[Command.TRACK_LOAD_TABLE.value](0, number_of_entries, body)
+        return self.commands[Command.TRACK_LOAD_TABLE.value](ua.UInt16(0))
 
     def _format_tt_line(
         self,
