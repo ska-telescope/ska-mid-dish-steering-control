@@ -418,7 +418,10 @@ class SCU:
                         f"simulator, only v{COMPATIBLE_CETC_SIM_VER} and up"
                     )
             except InvalidVersion:
-                logger.warning("Server version does not conform to semantic versioning")
+                logger.warning(
+                    "Server version (%s) does not conform to semantic versioning",
+                    str(self.server_version),
+                )
 
         self.commands: CmdDict
         self.populate_node_dicts(gui_app, use_nodes_cache)
