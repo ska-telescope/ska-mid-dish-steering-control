@@ -23,6 +23,7 @@ from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
+from packaging.version import InvalidVersion, Version
 from platformdirs import user_cache_dir
 
 logger = logging.getLogger("sculib")
@@ -35,6 +36,7 @@ CmdDict = dict[str, Callable[..., CmdReturn]]
 
 PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
+COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
 
 
 def configure_logging(default_log_level: int = logging.INFO) -> None:
@@ -406,6 +408,20 @@ class SCU:
             self._server_str_id = f"{self._server_url} - version unknown"
         else:
             self._server_str_id = f"{self._server_url} - v{self.server_version}"
+            try:
+                if (
+                    self.namespace == "CETC54"
+                    and Version(self.server_version) < COMPATIBLE_CETC_SIM_VER
+                ):
+                    raise RuntimeError(
+                        f"DiSQ-SCU not compatible with v{self.server_version} of CETC "
+                        f"simulator, only v{COMPATIBLE_CETC_SIM_VER} and up"
+                    )
+            except InvalidVersion:
+                logger.warning(
+                    "Server version (%s) does not conform to semantic versioning",
+                    str(self.server_version),
+                )
 
         self.commands: CmdDict
         self.populate_node_dicts(gui_app, use_nodes_cache)
