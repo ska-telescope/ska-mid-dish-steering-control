@@ -11,7 +11,7 @@ import queue
 import socket
 import threading
 import time
-from enum import Enum
+from enum import Enum, IntEnum
 from functools import cached_property
 from importlib import metadata, resources
 from pathlib import Path
@@ -27,12 +27,6 @@ from packaging.version import InvalidVersion, Version
 from platformdirs import user_cache_dir
 
 logger = logging.getLogger("sculib")
-
-# Type aliases
-NodeDict = dict[str, tuple[Node, int]]
-AttrDict = dict[str, object]
-CmdReturn = tuple[int, str, list[int | None] | None]
-CmdDict = dict[str, Callable[..., CmdReturn]]
 
 PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
@@ -274,6 +268,40 @@ class Command(Enum):
     TRACK_LOAD_STATIC_OFF = "Tracking.Commands.TrackLoadStaticOff"
     TRACK_LOAD_TABLE = "Tracking.Commands.TrackLoadTable"
     TRACK_START = "Tracking.Commands.TrackStart"
+
+
+class ResultCode(IntEnum):
+    """
+    Result codes of commands.
+
+    This enum extens the CmdResponseType and needs to be kept up to date with the ICD.
+    """
+
+    # Codes for caught asyncua exceptions
+    CONNECTION_CLOSED = -3
+    UA_BASE_EXCEPTION = -2
+    # Code for when command is not executed by SCU for some reason
+    NOT_EXECUTED = -1
+    # CmdResponseType enum
+    NO_CMD_AUTH = 0
+    DISH_LOCKED = 1
+    COMMAND_REJECTED = 2
+    COMMAND_TIMEOUT = 3
+    COMMAND_FAILED = 4
+    AXIS_NOT_ACTIVATED = 5
+    STOWED = 6
+    PARAMETER_INVALID = 7
+    PARAMETER_OUT_OF_RANGE = 8
+    COMMAND_ACTIVATED = 9
+    COMMAND_DONE = 10
+    NOT_IMPLEMENTED = 11
+
+
+# Type aliases
+NodeDict = dict[str, tuple[Node, int]]
+AttrDict = dict[str, object]
+CmdReturn = tuple[ResultCode, str, list[int | None] | None]
+CmdDict = dict[str, Callable[..., CmdReturn]]
 
 
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
@@ -750,7 +778,7 @@ class SCU:
         """
         return self.client is not None
 
-    def take_authority(self, user: str | int) -> tuple[int, str]:
+    def take_authority(self, user: str | int) -> tuple[ResultCode, str]:
         """
         Take command authority.
 
@@ -765,26 +793,26 @@ class SCU:
             else user
         )
         if user_int == 2:  # HHP
-            code = -1
+            code = ResultCode.NOT_EXECUTED
             msg = "DiSQ-SCU cannot take authority as HHP user"
             logger.info("TakeAuth command not executed, as %s", msg)
         elif self._user is None or (self._user is not None and self._user < user_int):
             code, msg, vals = self.commands[Command.TAKE_AUTH.value](
                 ua.UInt16(user_int)
             )
-            if code == 10:  # CommandDone
+            if code == ResultCode.COMMAND_DONE:
                 self._user = user_int
                 self._session_id = ua.UInt16(vals[0])
             else:
                 logger.error("TakeAuth command failed with message '%s'", msg)
         else:
             user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
-            code = -1
+            code = ResultCode.NOT_EXECUTED
             msg = f"DiSQ-SCU already has command authority with user {user_str}"
             logger.info("TakeAuth command not executed, as %s", msg)
         return code, msg
 
-    def release_authority(self) -> tuple[int, str]:
+    def release_authority(self) -> tuple[ResultCode, str]:
         """
         Release command authority.
 
@@ -795,9 +823,9 @@ class SCU:
             code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
                 ua.UInt16(self._user)
             )
-            if code == 10:  # CommandDone
+            if code == ResultCode.COMMAND_DONE:
                 self._user, self._session_id = None, None
-            elif code in [0, 4]:  # NoCmdAuth, CommandFailed
+            elif code in [ResultCode.NO_CMD_AUTH, ResultCode.COMMAND_FAILED]:
                 user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                 logger.info(
                     "DiSQ-SCU has already lost command authority as user '%s' to "
@@ -806,7 +834,7 @@ class SCU:
                 )
                 self._user, self._session_id = None, None
         else:
-            code = -1
+            code = ResultCode.NOT_EXECUTED
             msg = "DiSQ-SCU has no command authority to release."
             logger.info(msg)
         return code, msg
@@ -936,9 +964,9 @@ class SCU:
             node_parent = asyncio.run_coroutine_threadsafe(
                 node.get_parent(), event_loop
             ).result()
-            call = node_parent.call_method
+            node_call_method = node_parent.call_method
         except AttributeError as e:
-            logger.warning(
+            logger.error(
                 "Caught an exception while trying to get the method for a command.\n"
                 "Exception: %s\nNode name: %s\nParent object: %s",
                 e,
@@ -949,33 +977,34 @@ class SCU:
             def empty_func(
                 *args: Any,  # pylint: disable=unused-argument
             ) -> CmdReturn:
-                logger.warning("Command node %s has no method to call.", uid)
-                return -1, "No method", None
+                return ResultCode.NOT_EXECUTED, "No command method to call", None
 
             return empty_func
 
         read_name = asyncio.run_coroutine_threadsafe(
             node.read_display_name(), event_loop
         )
-        uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
+        node_id = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
 
+        # pylint: disable=protected-access
         def fn(*args: Any) -> CmdReturn:
             """
             Execute function with arguments and return tuple with return code/message.
 
             :param args: Optional positional arguments to pass to the function.
             :type args: tuple
-
             :return: A tuple containing the return code (int), return message (str),
                 and a list of other returned values (Any), if any, otherwise None.
             :rtype: tuple[int, str, list[Any] | None]
 
-            :raises: Any exception raised during the execution of the function will be
-                handled by the function and a tuple with return code -1 and exception
-                message will be returned.
+            Any exception raised during the execution of the function will be handled
+            and a tuple with return code and exception message returned.
 
             Note: This function uses asyncio to run the coroutine in a separate thread.
             """
+            result_code = None
+            result_output = None
+            result_msg = None
             try:
                 cmd_args = (
                     [self._session_id, *args]
@@ -984,26 +1013,24 @@ class SCU:
                 )
                 logger.debug(
                     "Calling command node '%s' with args list: %s",
-                    uid,
+                    node_id,
                     cmd_args,
                 )
-                result: int | list[Any] = asyncio.run_coroutine_threadsafe(
-                    call(uid, *cmd_args), event_loop
+                result: None | int | list[Any] = asyncio.run_coroutine_threadsafe(
+                    node_call_method(node_id, *cmd_args), event_loop
                 ).result()
                 if isinstance(result, list):
-                    return_code: int = result.pop(0)
-                    return_vals = result
-                else:
-                    return_code = result
-                    return_vals = None
-                if hasattr(ua, "CmdResponseType") and return_code is not None:
-                    # The asyncua library has a CmdResponseType enum ONLY if the opcua
-                    # server implements the type
-                    # pylint: disable=no-member
-                    return_msg = str(ua.CmdResponseType(return_code).name)
-                else:
-                    return_msg = str(return_code)
-                if return_code == 0:  # NoCmdAuth
+                    result_code = ResultCode(result.pop(0))
+                    result_output = result
+                elif result is not None:
+                    result_code = ResultCode(result)
+                if result_code is not None:
+                    result_msg = (
+                        ua.CmdResponseType(result_code).name
+                        if hasattr(ua, "CmdResponseType")
+                        else result_code.name
+                    )
+                if result_code == ResultCode.NO_CMD_AUTH:
                     user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                     logger.info(
                         "DiSQ-SCU has lost command authority as user '%s' to "
@@ -1011,14 +1038,25 @@ class SCU:
                         user,
                     )
                     self._user, self._session_id = None, None
-                return (return_code, return_msg, return_vals)
-            except Exception as e:
-                # e.add_note(f'Command: {uid} args: {args}')
+            except ConnectionError as e:
+                result_code = ResultCode.CONNECTION_CLOSED
+                result_msg = f"asyncua exception: {str(e)}"
                 asyncio.run_coroutine_threadsafe(
-                    handle_exception(e, f"Command: {uid} ({node_name}), args: {args}"),
+                    handle_exception(
+                        e, f"Command: {node_id} ({node_name}), args: {args}"
+                    ),
                     event_loop,
                 )
-                return -1, f"asyncua exception: {str(e)}", None
+            except ua.uaerrors._base.UaError as e:  # Base asyncua exception
+                result_code = ResultCode.UA_BASE_EXCEPTION
+                result_msg = f"asyncua exception: {str(e)}"
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(
+                        e, f"Command: {node_id} ({node_name}), args: {args}"
+                    ),
+                    event_loop,
+                )
+            return result_code, result_msg, result_output
 
         return fn
 
