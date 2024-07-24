@@ -237,6 +237,24 @@ class SubscriptionHandler:
         self.subscription_queue.put(value_for_queue, block=True, timeout=0.1)
 
 
+class TriggerCallbackOnLogHandler(logging.Handler):
+    """Trigger a callback when a specific log message is recorded."""
+
+    def __init__(
+        self, trigger_msg: str, callback: Callable[[str], None], callback_msg: str = ""
+    ) -> None:
+        """Initialise the logging handler."""
+        super().__init__()
+        self.trigger_msg = trigger_msg
+        self.callback = callback
+        self.callback_msg = callback_msg
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Check log record for trigger message."""
+        if self.trigger_msg in record.getMessage():
+            self.callback(self.callback_msg)
+
+
 class CachedNodesDict(TypedDict):
     """Cached nodes dictionary type."""
 
@@ -525,14 +543,22 @@ class SCU:
 
     def disconnect_and_cleanup(self) -> None:
         """
-        Disconnect from server and clean up client resources.
+        Disconnect from server and clean up SCU client resources.
 
-        This method unsubscribes from all subscriptions, disconnects from the server,
-        and stops the event loop if it was started in a separate thread.
+        Release any command authority, unsubscribe from all subscriptions, disconnect
+        from the server, and stop the event loop if it was started in a separate thread.
         """
         self.release_authority()
         self.unsubscribe_all()
         self.disconnect()
+        self.cleanup_resources()
+
+    def cleanup_resources(self) -> None:
+        """
+        Clean up SCU client resources.
+
+        Stop the event loop if it was started in a separate thread.
+        """
         if self.event_loop_thread is not None:
             # Signal the event loop thread to stop.
             self.event_loop.call_soon_threadsafe(self.event_loop.stop)
@@ -890,8 +916,6 @@ class SCU:
         :return: A dictionary mapping OPC-UA enum type names to their corresponding
             value. The value being an enumerated type.
         :rtype: dict
-        :raises AttributeError: If any of the required enum types are not found in the
-            UA namespace.
         """
         result = {}
         missing_types = []
@@ -1646,6 +1670,7 @@ class SCU:
         attributes: str | list[str],
         period: int = 100,
         data_queue: queue.Queue | None = None,
+        subscription_error_callback: Callable[[str], None] | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1660,6 +1685,7 @@ class SCU:
         :type data_queue: queue.Queue
         :return: unique identifier for the subscription and lists of missing/bad nodes.
         :rtype: tuple[int, list, list]
+        :param subscription_error_callback: to call if error is logged, default None.
         """
         if data_queue is None:
             data_queue = self.subscription_queue
@@ -1705,6 +1731,15 @@ class SCU:
             "nodes": nodes - bad_nodes,
             "subscription": subscription,
         }
+        if subscription_error_callback is not None:
+            trigger = "DataChange subscription has no status_change_notification method"
+            subscription.logger.addHandler(
+                TriggerCallbackOnLogHandler(
+                    trigger,
+                    subscription_error_callback,
+                    f"Connection to server lost because of asyncua ERROR: {trigger}",
+                )
+            )
         return uid, missing_nodes, list(bad_nodes)
 
     def unsubscribe(self, uid: int) -> None:
