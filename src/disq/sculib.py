@@ -11,9 +11,9 @@ import queue
 import socket
 import threading
 import time
-from enum import Enum, IntEnum
+from enum import Enum
 from functools import cached_property
-from importlib import metadata, resources
+from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Final, Type, TypedDict
 
@@ -26,9 +26,10 @@ from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 from platformdirs import user_cache_dir
 
+from disq.constants import PACKAGE_VERSION, CmdReturn, Command, ResultCode
+
 logger = logging.getLogger("sculib")
 
-PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
 
@@ -262,63 +263,9 @@ class CachedNodesDict(TypedDict):
     timestamp: str
 
 
-class Command(Enum):
-    """
-    Commands of Dish Controller used in SCU methods.
-
-    This needs to be kept up to date with the ICD.
-    """
-
-    TAKE_AUTH = "CommandArbiter.Commands.TakeAuth"
-    RELEASE_AUTH = "CommandArbiter.Commands.ReleaseAuth"
-    ACTIVATE = "Management.Commands.Activate"
-    DEACTIVATE = "Management.Commands.DeActivate"
-    MOVE2BAND = "Management.Commands.Move2Band"
-    RESET = "Management.Commands.Reset"
-    SLEW2ABS_AZ_EL = "Management.Commands.Slew2AbsAzEl"
-    SLEW2ABS_SINGLE_AX = "Management.Commands.Slew2AbsSingleAx"
-    STOP = "Management.Commands.Stop"
-    STOW = "Management.Commands.Stow"
-    AMBTEMP_CORR_SETUP = "Pointing.Commands.AmbTempCorrSetup"
-    PM_CORR_ON_OFF = "Pointing.Commands.PmCorrOnOff"
-    STATIC_PM_SETUP = "Pointing.Commands.StaticPmSetup"
-    INTERLOCK_ACK = "Safety.Commands.InterlockAck"
-    TRACK_LOAD_STATIC_OFF = "Tracking.Commands.TrackLoadStaticOff"
-    TRACK_LOAD_TABLE = "Tracking.Commands.TrackLoadTable"
-    TRACK_START = "Tracking.Commands.TrackStart"
-
-
-class ResultCode(IntEnum):
-    """
-    Result codes of commands.
-
-    This enum extens the CmdResponseType and needs to be kept up to date with the ICD.
-    """
-
-    # Codes for caught asyncua exceptions
-    CONNECTION_CLOSED = -3
-    UA_BASE_EXCEPTION = -2
-    # Code for when command is not executed by SCU for some reason
-    NOT_EXECUTED = -1
-    # CmdResponseType enum
-    NO_CMD_AUTH = 0
-    DISH_LOCKED = 1
-    COMMAND_REJECTED = 2
-    COMMAND_TIMEOUT = 3
-    COMMAND_FAILED = 4
-    AXIS_NOT_ACTIVATED = 5
-    STOWED = 6
-    PARAMETER_INVALID = 7
-    PARAMETER_OUT_OF_RANGE = 8
-    COMMAND_ACTIVATED = 9
-    COMMAND_DONE = 10
-    NOT_IMPLEMENTED = 11
-
-
 # Type aliases
 NodeDict = dict[str, tuple[Node, int]]
 AttrDict = dict[str, object]
-CmdReturn = tuple[ResultCode, str, list[int | None] | None]
 CmdDict = dict[str, Callable[..., CmdReturn]]
 
 
