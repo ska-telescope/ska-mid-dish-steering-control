@@ -203,7 +203,12 @@ class SubscriptionHandler:
     :type nodes: dict
     """
 
-    def __init__(self, subscription_queue: queue.Queue, nodes: dict[Node, str]) -> None:
+    def __init__(
+        self,
+        subscription_queue: queue.Queue,
+        nodes: dict[Node, str],
+        bad_shutdown_callback: Callable[[str], None] | None = None,
+    ) -> None:
         """
         Initialize the object with a subscription queue and nodes.
 
@@ -211,9 +216,12 @@ class SubscriptionHandler:
         :type subscription_queue: queue.Queue
         :param nodes: A dictionary of nodes.
         :type nodes: dict
+        :param bad_shutdown_callback: will be called if a BadShutdown subscription
+            status notification is received, defaults to None.
         """
         self.subscription_queue = subscription_queue
         self.nodes = nodes
+        self.bad_shutdown_callback = bad_shutdown_callback
 
     def datachange_notification(
         self, node: Node, value: Any, data: ua.DataChangeNotification
@@ -237,23 +245,23 @@ class SubscriptionHandler:
         }
         self.subscription_queue.put(value_for_queue, block=True, timeout=0.1)
 
-
-class TriggerCallbackOnLogHandler(logging.Handler):
-    """Trigger a callback when a specific log message is recorded."""
-
-    def __init__(
-        self, trigger_msg: str, callback: Callable[[str], None], callback_msg: str = ""
-    ) -> None:
-        """Initialise the logging handler."""
-        super().__init__()
-        self.trigger_msg = trigger_msg
-        self.callback = callback
-        self.callback_msg = callback_msg
-
-    def emit(self, record: logging.LogRecord) -> None:
-        """Check log record for trigger message."""
-        if self.trigger_msg in record.getMessage():
-            self.callback(self.callback_msg)
+    def status_change_notification(self, status: ua.StatusChangeNotification) -> None:
+        """Callback for every status change notification from server."""
+        try:
+            status.Status.check()  # Raises an exception if the status code is bad.
+            logger.info(
+                "Received status change notification: %s",
+                status.Status.name,
+            )
+        except ua.UaStatusCodeError as e:
+            logger.error(
+                "Received bad status change notification: %s",
+                e,
+            )
+            if status.Status.value == ua.StatusCodes.BadShutdown:
+                self.bad_shutdown_callback(
+                    f"Connection is closed - asyncua exception: {e}"
+                )
 
 
 class CachedNodesDict(TypedDict):
@@ -1018,7 +1026,7 @@ class SCU:
                     ),
                     event_loop,
                 )
-            except ua.uaerrors._base.UaError as e:  # Base asyncua exception
+            except ua.UaError as e:  # Base asyncua exception
                 result_code = ResultCode.UA_BASE_EXCEPTION
                 result_msg = f"asyncua exception: {str(e)}"
                 asyncio.run_coroutine_threadsafe(
@@ -1617,7 +1625,7 @@ class SCU:
         attributes: str | list[str],
         period: int = 100,
         data_queue: queue.Queue | None = None,
-        subscription_error_callback: Callable[[str], None] | None = None,
+        bad_shutdown_callback: Callable[[str], None] | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1632,11 +1640,14 @@ class SCU:
         :type data_queue: queue.Queue
         :return: unique identifier for the subscription and lists of missing/bad nodes.
         :rtype: tuple[int, list, list]
-        :param subscription_error_callback: to call if error is logged, default None.
+        :param bad_shutdown_callback: will be called if a BadShutdown subscription
+            status notification is received, defaults to None.
         """
         if data_queue is None:
             data_queue = self.subscription_queue
-        subscription_handler = SubscriptionHandler(data_queue, self.nodes_reversed)
+        subscription_handler = SubscriptionHandler(
+            data_queue, self.nodes_reversed, bad_shutdown_callback
+        )
         if not isinstance(attributes, list):
             attributes = [
                 attributes,
@@ -1678,15 +1689,6 @@ class SCU:
             "nodes": nodes - bad_nodes,
             "subscription": subscription,
         }
-        if subscription_error_callback is not None:
-            trigger = "DataChange subscription has no status_change_notification method"
-            subscription.logger.addHandler(
-                TriggerCallbackOnLogHandler(
-                    trigger,
-                    subscription_error_callback,
-                    f"Connection to server lost because of asyncua ERROR: {trigger}",
-                )
-            )
         return uid, missing_nodes, list(bad_nodes)
 
     def unsubscribe(self, uid: int) -> None:
