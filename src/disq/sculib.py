@@ -13,7 +13,7 @@ import threading
 import time
 from enum import Enum
 from functools import cached_property
-from importlib import metadata, resources
+from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Final, Type, TypedDict
 
@@ -26,15 +26,10 @@ from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 from platformdirs import user_cache_dir
 
+from disq.constants import PACKAGE_VERSION, CmdReturn, Command, ResultCode
+
 logger = logging.getLogger("sculib")
 
-# Type aliases
-NodeDict = dict[str, tuple[Node, int]]
-AttrDict = dict[str, object]
-CmdReturn = tuple[int, str, list[int | None] | None]
-CmdDict = dict[str, Callable[..., CmdReturn]]
-
-PACKAGE_VERSION: Final = metadata.version("DiSQ")
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
 
@@ -208,7 +203,12 @@ class SubscriptionHandler:
     :type nodes: dict
     """
 
-    def __init__(self, subscription_queue: queue.Queue, nodes: dict[Node, str]) -> None:
+    def __init__(
+        self,
+        subscription_queue: queue.Queue,
+        nodes: dict[Node, str],
+        bad_shutdown_callback: Callable[[str], None] | None = None,
+    ) -> None:
         """
         Initialize the object with a subscription queue and nodes.
 
@@ -216,9 +216,12 @@ class SubscriptionHandler:
         :type subscription_queue: queue.Queue
         :param nodes: A dictionary of nodes.
         :type nodes: dict
+        :param bad_shutdown_callback: will be called if a BadShutdown subscription
+            status notification is received, defaults to None.
         """
         self.subscription_queue = subscription_queue
         self.nodes = nodes
+        self.bad_shutdown_callback = bad_shutdown_callback
 
     def datachange_notification(
         self, node: Node, value: Any, data: ua.DataChangeNotification
@@ -242,6 +245,24 @@ class SubscriptionHandler:
         }
         self.subscription_queue.put(value_for_queue, block=True, timeout=0.1)
 
+    def status_change_notification(self, status: ua.StatusChangeNotification) -> None:
+        """Callback for every status change notification from server."""
+        try:
+            status.Status.check()  # Raises an exception if the status code is bad.
+            logger.info(
+                "Received status change notification: %s",
+                status.Status.name,
+            )
+        except ua.UaStatusCodeError as e:
+            logger.error(
+                "Received bad status change notification: %s",
+                e,
+            )
+            if status.Status.value == ua.StatusCodes.BadShutdown:
+                self.bad_shutdown_callback(
+                    f"Connection is closed - asyncua exception: {e}"
+                )
+
 
 class CachedNodesDict(TypedDict):
     """Cached nodes dictionary type."""
@@ -250,30 +271,10 @@ class CachedNodesDict(TypedDict):
     timestamp: str
 
 
-class Command(Enum):
-    """
-    Commands of Dish Controller used in SCU methods.
-
-    This needs to be kept up to date with the ICD.
-    """
-
-    TAKE_AUTH = "CommandArbiter.Commands.TakeAuth"
-    RELEASE_AUTH = "CommandArbiter.Commands.ReleaseAuth"
-    ACTIVATE = "Management.Commands.Activate"
-    DEACTIVATE = "Management.Commands.DeActivate"
-    MOVE2BAND = "Management.Commands.Move2Band"
-    RESET = "Management.Commands.Reset"
-    SLEW2ABS_AZ_EL = "Management.Commands.Slew2AbsAzEl"
-    SLEW2ABS_SINGLE_AX = "Management.Commands.Slew2AbsSingleAx"
-    STOP = "Management.Commands.Stop"
-    STOW = "Management.Commands.Stow"
-    AMBTEMP_CORR_SETUP = "Pointing.Commands.AmbTempCorrSetup"
-    PM_CORR_ON_OFF = "Pointing.Commands.PmCorrOnOff"
-    STATIC_PM_SETUP = "Pointing.Commands.StaticPmSetup"
-    INTERLOCK_ACK = "Safety.Commands.InterlockAck"
-    TRACK_LOAD_STATIC_OFF = "Tracking.Commands.TrackLoadStaticOff"
-    TRACK_LOAD_TABLE = "Tracking.Commands.TrackLoadTable"
-    TRACK_START = "Tracking.Commands.TrackStart"
+# Type aliases
+NodeDict = dict[str, tuple[Node, int]]
+AttrDict = dict[str, object]
+CmdDict = dict[str, Callable[..., CmdReturn]]
 
 
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
@@ -497,14 +498,23 @@ class SCU:
 
     def disconnect_and_cleanup(self) -> None:
         """
-        Disconnect from server and clean up client resources.
+        Disconnect from server and clean up SCU client resources.
 
-        This method unsubscribes from all subscriptions, disconnects from the server,
-        and stops the event loop if it was started in a separate thread.
+        Release any command authority, unsubscribe from all subscriptions, disconnect
+        from the server, and stop the event loop if it was started in a separate thread.
         """
-        self.release_authority()
-        self.unsubscribe_all()
-        self.disconnect()
+        result_code, _ = self.release_authority()
+        if result_code != ResultCode.CONNECTION_CLOSED:
+            self.unsubscribe_all()
+            self.disconnect()
+        self.cleanup_resources()
+
+    def cleanup_resources(self) -> None:
+        """
+        Clean up SCU client resources.
+
+        Stop the event loop if it was started in a separate thread.
+        """
         if self.event_loop_thread is not None:
             # Signal the event loop thread to stop.
             self.event_loop.call_soon_threadsafe(self.event_loop.stop)
@@ -750,7 +760,7 @@ class SCU:
         """
         return self.client is not None
 
-    def take_authority(self, user: str | int) -> tuple[int, str]:
+    def take_authority(self, user: str | int) -> tuple[ResultCode, str]:
         """
         Take command authority.
 
@@ -765,26 +775,26 @@ class SCU:
             else user
         )
         if user_int == 2:  # HHP
-            code = -1
+            code = ResultCode.NOT_EXECUTED
             msg = "DiSQ-SCU cannot take authority as HHP user"
             logger.info("TakeAuth command not executed, as %s", msg)
         elif self._user is None or (self._user is not None and self._user < user_int):
             code, msg, vals = self.commands[Command.TAKE_AUTH.value](
                 ua.UInt16(user_int)
             )
-            if code == 10:  # CommandDone
+            if code == ResultCode.COMMAND_DONE:
                 self._user = user_int
                 self._session_id = ua.UInt16(vals[0])
             else:
                 logger.error("TakeAuth command failed with message '%s'", msg)
         else:
             user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
-            code = -1
+            code = ResultCode.NOT_EXECUTED
             msg = f"DiSQ-SCU already has command authority with user {user_str}"
             logger.info("TakeAuth command not executed, as %s", msg)
         return code, msg
 
-    def release_authority(self) -> tuple[int, str]:
+    def release_authority(self) -> tuple[ResultCode, str]:
         """
         Release command authority.
 
@@ -795,9 +805,9 @@ class SCU:
             code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
                 ua.UInt16(self._user)
             )
-            if code == 10:  # CommandDone
+            if code == ResultCode.COMMAND_DONE:
                 self._user, self._session_id = None, None
-            elif code in [0, 4]:  # NoCmdAuth, CommandFailed
+            elif code in [ResultCode.NO_CMD_AUTH, ResultCode.COMMAND_FAILED]:
                 user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                 logger.info(
                     "DiSQ-SCU has already lost command authority as user '%s' to "
@@ -806,7 +816,7 @@ class SCU:
                 )
                 self._user, self._session_id = None, None
         else:
-            code = -1
+            code = ResultCode.NOT_EXECUTED
             msg = "DiSQ-SCU has no command authority to release."
             logger.info(msg)
         return code, msg
@@ -862,8 +872,6 @@ class SCU:
         :return: A dictionary mapping OPC-UA enum type names to their corresponding
             value. The value being an enumerated type.
         :rtype: dict
-        :raises AttributeError: If any of the required enum types are not found in the
-            UA namespace.
         """
         result = {}
         missing_types = []
@@ -936,9 +944,9 @@ class SCU:
             node_parent = asyncio.run_coroutine_threadsafe(
                 node.get_parent(), event_loop
             ).result()
-            call = node_parent.call_method
+            node_call_method = node_parent.call_method
         except AttributeError as e:
-            logger.warning(
+            logger.error(
                 "Caught an exception while trying to get the method for a command.\n"
                 "Exception: %s\nNode name: %s\nParent object: %s",
                 e,
@@ -949,33 +957,33 @@ class SCU:
             def empty_func(
                 *args: Any,  # pylint: disable=unused-argument
             ) -> CmdReturn:
-                logger.warning("Command node %s has no method to call.", uid)
-                return -1, "No method", None
+                return ResultCode.NOT_EXECUTED, "No command method to call", None
 
             return empty_func
 
         read_name = asyncio.run_coroutine_threadsafe(
             node.read_display_name(), event_loop
         )
-        uid = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
+        node_id = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
 
+        # pylint: disable=protected-access
         def fn(*args: Any) -> CmdReturn:
             """
             Execute function with arguments and return tuple with return code/message.
 
             :param args: Optional positional arguments to pass to the function.
             :type args: tuple
-
             :return: A tuple containing the return code (int), return message (str),
                 and a list of other returned values (Any), if any, otherwise None.
             :rtype: tuple[int, str, list[Any] | None]
 
-            :raises: Any exception raised during the execution of the function will be
-                handled by the function and a tuple with return code -1 and exception
-                message will be returned.
+            Any exception raised during the execution of the function will be handled
+            and a tuple with return code and exception message returned.
 
             Note: This function uses asyncio to run the coroutine in a separate thread.
             """
+            result_code = None
+            result_output = None
             try:
                 cmd_args = (
                     [self._session_id, *args]
@@ -984,26 +992,41 @@ class SCU:
                 )
                 logger.debug(
                     "Calling command node '%s' with args list: %s",
-                    uid,
+                    node_id,
                     cmd_args,
                 )
-                result: int | list[Any] = asyncio.run_coroutine_threadsafe(
-                    call(uid, *cmd_args), event_loop
+                result: None | int | list[Any] = asyncio.run_coroutine_threadsafe(
+                    node_call_method(node_id, *cmd_args), event_loop
                 ).result()
+                # Unpack result if it is a list
                 if isinstance(result, list):
-                    return_code: int = result.pop(0)
-                    return_vals = result
+                    result_code_int = result.pop(0)
+                    result_output = result
                 else:
-                    return_code = result
-                    return_vals = None
-                if hasattr(ua, "CmdResponseType") and return_code is not None:
-                    # The asyncua library has a CmdResponseType enum ONLY if the opcua
-                    # server implements the type
-                    # pylint: disable=no-member
-                    return_msg = str(ua.CmdResponseType(return_code).name)
+                    result_code_int = result
+                # Check for valid result code
+                result_code = (
+                    ResultCode(result_code_int)
+                    if result_code_int in ResultCode.__members__.values()
+                    else ResultCode.UNKNOWN
+                )
+                # Set result message
+                if result_code != ResultCode.UNKNOWN:
+                    result_msg = (
+                        ua.CmdResponseType(result_code).name
+                        if hasattr(ua, "CmdResponseType")
+                        else result_code.name
+                    )
                 else:
-                    return_msg = str(return_code)
-                if return_code == 0:  # NoCmdAuth
+                    result_msg = result_code.name
+                # Handle specific result codes
+                if result_code == ResultCode.UNKNOWN:
+                    logger.warning(
+                        "DiSQ-SCU has received an unknown result code: %s - "
+                        "Check server's CmdResponseType and DiSQ ResultCode enum!",
+                        result_code_int,
+                    )
+                elif result_code == ResultCode.NO_CMD_AUTH:
                     user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                     logger.info(
                         "DiSQ-SCU has lost command authority as user '%s' to "
@@ -1011,14 +1034,25 @@ class SCU:
                         user,
                     )
                     self._user, self._session_id = None, None
-                return (return_code, return_msg, return_vals)
-            except Exception as e:
-                # e.add_note(f'Command: {uid} args: {args}')
+            except ConnectionError as e:
+                result_code = ResultCode.CONNECTION_CLOSED
+                result_msg = f"asyncua exception: {str(e)}"
                 asyncio.run_coroutine_threadsafe(
-                    handle_exception(e, f"Command: {uid} ({node_name}), args: {args}"),
+                    handle_exception(
+                        e, f"Command: {node_id} ({node_name}), args: {args}"
+                    ),
                     event_loop,
                 )
-                return -1, f"asyncua exception: {str(e)}", None
+            except ua.UaError as e:  # Base asyncua exception
+                result_code = ResultCode.UA_BASE_EXCEPTION
+                result_msg = f"asyncua exception: {str(e)}"
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(
+                        e, f"Command: {node_id} ({node_name}), args: {args}"
+                    ),
+                    event_loop,
+                )
+            return result_code, result_msg, result_output
 
         return fn
 
@@ -1608,6 +1642,7 @@ class SCU:
         attributes: str | list[str],
         period: int = 100,
         data_queue: queue.Queue | None = None,
+        bad_shutdown_callback: Callable[[str], None] | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1622,10 +1657,14 @@ class SCU:
         :type data_queue: queue.Queue
         :return: unique identifier for the subscription and lists of missing/bad nodes.
         :rtype: tuple[int, list, list]
+        :param bad_shutdown_callback: will be called if a BadShutdown subscription
+            status notification is received, defaults to None.
         """
         if data_queue is None:
             data_queue = self.subscription_queue
-        subscription_handler = SubscriptionHandler(data_queue, self.nodes_reversed)
+        subscription_handler = SubscriptionHandler(
+            data_queue, self.nodes_reversed, bad_shutdown_callback
+        )
         if not isinstance(attributes, list):
             attributes = [
                 attributes,
