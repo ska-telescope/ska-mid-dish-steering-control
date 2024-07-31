@@ -503,9 +503,10 @@ class SCU:
         Release any command authority, unsubscribe from all subscriptions, disconnect
         from the server, and stop the event loop if it was started in a separate thread.
         """
-        self.release_authority()
-        self.unsubscribe_all()
-        self.disconnect()
+        result_code, _ = self.release_authority()
+        if result_code != ResultCode.CONNECTION_CLOSED:
+            self.unsubscribe_all()
+            self.disconnect()
         self.cleanup_resources()
 
     def cleanup_resources(self) -> None:
