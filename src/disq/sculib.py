@@ -983,7 +983,6 @@ class SCU:
             """
             result_code = None
             result_output = None
-            result_msg = None
             try:
                 cmd_args = (
                     [self._session_id, *args]
@@ -998,18 +997,35 @@ class SCU:
                 result: None | int | list[Any] = asyncio.run_coroutine_threadsafe(
                     node_call_method(node_id, *cmd_args), event_loop
                 ).result()
+                # Unpack result if it is a list
                 if isinstance(result, list):
-                    result_code = ResultCode(result.pop(0))
+                    result_code_int = result.pop(0)
                     result_output = result
-                elif result is not None:
-                    result_code = ResultCode(result)
-                if result_code is not None:
+                else:
+                    result_code_int = result
+                # Check for valid result code
+                result_code = (
+                    ResultCode(result_code_int)
+                    if result_code_int in ResultCode.__members__.values()
+                    else ResultCode.UNKNOWN
+                )
+                # Set result message
+                if result_code != ResultCode.UNKNOWN:
                     result_msg = (
                         ua.CmdResponseType(result_code).name
                         if hasattr(ua, "CmdResponseType")
                         else result_code.name
                     )
-                if result_code == ResultCode.NO_CMD_AUTH:
+                else:
+                    result_msg = result_code.name
+                # Handle specific result codes
+                if result_code == ResultCode.UNKNOWN:
+                    logger.warning(
+                        "DiSQ-SCU has received an unknown result code: %s - "
+                        "Check server's CmdResponseType and DiSQ ResultCode enum!",
+                        result_code_int,
+                    )
+                elif result_code == ResultCode.NO_CMD_AUTH:
                     user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                     logger.info(
                         "DiSQ-SCU has lost command authority as user '%s' to "
