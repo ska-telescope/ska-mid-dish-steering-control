@@ -278,7 +278,7 @@ CmdDict = dict[str, Callable[..., CmdReturn]]
 
 
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
-class SCU:
+class _SCU:
     """
     System Control Unit.
 
@@ -491,7 +491,7 @@ class SCU:
         self.populate_node_dicts(self._gui_app, self._use_nodes_cache)
         logger.info("Successfully connected to server and initialised SCU client")
 
-    def __enter__(self) -> "SCU":
+    def __enter__(self) -> "_SCU":
         """Connect to the server and setup the SCU client."""
         self.connect_and_setup()
         return self
