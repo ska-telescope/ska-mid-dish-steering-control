@@ -26,6 +26,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 from platformdirs import user_cache_dir
 
+from disq import configuration
 from disq.constants import PACKAGE_VERSION, CmdReturn, Command, ResultCode
 
 logger = logging.getLogger("sculib")
@@ -70,7 +71,7 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
         print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
 
     if config is None:
-        print("Reverting to basic logging config at level:{default_log_level}")
+        print(f"Reverting to basic logging config at level:{default_log_level}")
         logging.basicConfig(level=default_log_level)
     else:
         Path("logs").mkdir(parents=True, exist_ok=True)
@@ -296,7 +297,10 @@ class _SCU:
 
     ```
     scu = SCU(host="localhost", port=4840, endpoint="", namespace="", timeout=10.0)
+
+    # The scu object need to be connected to the server before it can be used
     scu.connect_and_setup()
+    scu.take_authority("LMC")
     # Do things
     scu.disconnect_and_cleanup()
     ```
@@ -306,6 +310,17 @@ class _SCU:
     ```
     with SCU(host="localhost") as scu:
         scu.take_authority("LMC")
+    ```
+    Finally the third and most complete option to initialise and connect an scu object
+    is to use the generator method, which will:
+    - Read the server address/port/namespace from the configuration file
+    - Configure logging
+    - Create (and return) the SCU object
+    - Connect to the server
+    - Take authority if requested
+    ```
+    scu = SCU_from_config('cetc54_simulator', take_authority='LMC')
+    # do things with the scu object...
     ```
     - All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
       `scu.nodes`. The keys are the full node names, the values are the Node objects.
@@ -2191,3 +2206,74 @@ class _SCU:
         for i in range(len(t)):  # pylint: disable=consider-using-enumerate
             body += self._format_tt_line(t[i], az[i], el[i])
         return body
+
+
+# pylint: disable=too-many-arguments, invalid-name
+def SCU(  # noqa: N802
+    host: str = "127.0.0.1",
+    port: int = 4840,
+    endpoint: str = "/OPCUA/SimpleServer",
+    namespace: str = "CETC54",
+    username: str | None = None,
+    password: str | None = None,
+    timeout: float = 10.0,
+    use_nodes_cache: bool = False,
+    authority_name: str | None = None,
+) -> _SCU:
+    """SCU object generator method.
+
+    This method creates an SCU object with the provided parameters, conneects it to the
+    OPC-UA server and sets it up, ready to be used with the attributes and commands.
+
+    :return: an instance of the _SCU class.
+    :rtype: _SCU
+    """
+    scu = _SCU(
+        host=host,
+        port=port,
+        endpoint=endpoint,
+        namespace=namespace,
+        username=username,
+        password=password,
+        timeout=timeout,
+        use_nodes_cache=use_nodes_cache,
+    )
+    scu.connect_and_setup()
+    if authority_name is not None:
+        scu.take_authority(authority_name)
+    return scu
+
+
+def SCU_from_config(  # noqa: N802
+    server_name: str,
+    ini_file: str = "disq.ini",
+    use_nodes_cache: bool = True,
+    authority_name: str | None = None,
+) -> _SCU:
+    """SCU object generator method.
+
+    This method creates an SCU object based on OPC-UA server_name connection details
+    found in the ini_file configuration file. It then conneects the SCU object to the
+    OPC-UA server and sets it up, ready to be used with the attributes and commands.
+
+    The method also configures logging based on the log configuration file:
+    "disq_logging_config.yaml".
+
+    :return: an initialised and connected instance of the _SCU class.
+    :rtype: _SCU
+    """
+    configure_logging()
+    sculib_args: dict = configuration.get_config_sculib_args(
+        ini_file, server_name=server_name
+    )
+    # TODO: figure out a neat way to handle conversion of config variables from string
+    if "timeout" in sculib_args:
+        sculib_args["timeout"] = float(sculib_args["timeout"].strip())
+    if "port" in sculib_args:
+        sculib_args["port"] = int(sculib_args["port"].strip())
+    scu = SCU(
+        **sculib_args,
+        use_nodes_cache=use_nodes_cache,
+        authority_name=authority_name,
+    )
+    return scu
