@@ -2249,7 +2249,7 @@ def SCU_from_config(  # noqa: N802
     ini_file: str = "disq.ini",
     use_nodes_cache: bool = True,
     authority_name: str | None = None,
-) -> SecondaryControlUnit:
+) -> SecondaryControlUnit | None:
     """SCU object generator method.
 
     This method creates an SCU object based on OPC-UA server_name connection details
@@ -2259,8 +2259,9 @@ def SCU_from_config(  # noqa: N802
     The method also configures logging based on the log configuration file:
     "disq_logging_config.yaml".
 
-    :return: an initialised and connected instance of the _SCU class.
-    :rtype: _SCU
+    :return: an initialised and connected instance of the _SCU class or None if the
+        connection to the OPC-UA server failed.
+    :rtype: _SCU | None
     """
     configure_logging()
     sculib_args: dict = configuration.get_config_sculib_args(
@@ -2271,9 +2272,16 @@ def SCU_from_config(  # noqa: N802
         sculib_args["timeout"] = float(sculib_args["timeout"].strip())
     if "port" in sculib_args:
         sculib_args["port"] = int(sculib_args["port"].strip())
-    scu = SCU(
-        **sculib_args,
-        use_nodes_cache=use_nodes_cache,
-        authority_name=authority_name,
-    )
+    try:
+        scu = SCU(
+            **sculib_args,
+            use_nodes_cache=use_nodes_cache,
+            authority_name=authority_name,
+        )
+    except ConnectionRefusedError:
+        logger.error(
+            "Failed to connect to the OPC-UA server with connection parameters: %s",
+            str(sculib_args),
+        )
+        return None
     return scu
