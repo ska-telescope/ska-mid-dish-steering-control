@@ -319,7 +319,7 @@ class SecondaryControlUnit:
     - Connect to the server
     - Take authority if requested
     ```
-    scu = SCU_from_config('cetc54_simulator', take_authority='LMC')
+    scu = SCU_from_config('cetc54_simulator', authority_name='LMC')
     # do things with the scu object...
     ```
     - All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
