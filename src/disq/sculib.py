@@ -2,6 +2,7 @@
 
 # pylint: disable=too-many-lines, broad-exception-caught
 import asyncio
+import concurrent
 import datetime
 import enum
 import json
@@ -484,7 +485,13 @@ class SecondaryControlUnit:
         self.server_nodes: NodeDict
         self.server_attributes: AttrDict
         self.server_commands: CmdDict
-        self.track_table: TrackTable
+        self.track_table: TrackTable = TrackTable()
+        self.stop_track_table_schedule_task_event: threading.Event | None = (
+            None
+        )
+        self.track_table_scheduled_task: concurrent.futures.Future | None = (
+            None
+        )
 
     def connect_and_setup(self) -> None:
         """
@@ -1062,7 +1069,7 @@ class SecondaryControlUnit:
                     if self._session_id is not None
                     else [*args]
                 )
-                logger.debug(
+                logger.warning(
                     "Calling command node '%s' with args list: %s",
                     node_id,
                     cmd_args,
@@ -1842,87 +1849,155 @@ class SecondaryControlUnit:
             )
         return values
 
-    def new_track_table_from_file(
+    def load_track_table(
         self,
-        file_name: str,
-        real_times: bool = False,
-        additional_offset: int = 5,
+        mode: int = 0,
+        tai: list[float] = [],
+        azi: list[float] = [],
+        ele: list[float] = [],
+        file_name: str | None = None,
+        real_times: bool = True,
+        additional_offset: float = 10.1,  # TODO Return to 5 when PLCs updated
     ) -> None:
         """
-        Load a track table file to upload with the load_program_track command.
-        Expects a CSV file with a header and three columns:
-        - Column 0 is the time
-        - Column 1 is the azimuth
-        - Column 2 is the elevation
+        Upload a track table to the PLC from lists. List lengths must match.
 
-        - positions = self.load_track_table_file(
-            os.getenv('HOME')+'/Downloads/radial.csv')
-        - await scu.load_program_track(asyncua.uaLoadEnumTypes.New,
-            len(positions),
-            positions[:, 0],
-            positions[:, 1],
-            positions[:, 2])
-
+        :param int mode: Choose from 0 for Append, and 1 for New. Default is Append.
+          # TODO add reset.
+        :param list[float] tai: A list of times to make up the track table points.
+        :param list[float] azi: A list of azimuths to make up the track table points.
+        :param list[float] ele: A list of elevations to make up the track table points.
         :param str file_name: File name of the track table file including its path.
         :param bool real_times: Whether the time column is a real time or a relative
-            time.
+            time. Default True.
+        :param float additional_offset: Add additional time to every point. Only has an
+            effect when real_times is False. Default 10.1
         """
-        track_table = TrackTable()
-        track_table.store_from_csv(file_name, real_times, additional_offset)
-        self.track_table = track_table
+        logger.warning("load_track_table top")  # TODO remove
+        if mode == 1:  # New track table
+            if self.stop_track_table_schedule_task_event is not None:
+                self.stop_track_table_schedule_task_event.set()
 
-    def new_track_table_from_script(self, tai, azi, ele):
-        track_table = TrackTable()
-        track_table.store_from_list(tai, azi, ele)
+            self.track_table = TrackTable()
+            self.track_table_scheduled_task = None
 
-        self.track_table = track_table
+        if len(tai) > 0:
+            self.track_table.store_from_list(tai, azi, ele)
+        elif file_name is not None:
+            self.track_table.store_from_csv(
+                file_name, real_times, additional_offset
+            )
+        else:
+            logger.error(
+                "Missing track table points, cannot load track table."
+            )
+            return
 
-    def add_track_points(self, tai, azi, ele) -> None:
-        self.track_table.add_from_list(tai, azi, ele)
+        # Rely on scheduled track table task to send appended values if it is still
+        # running.
+        if (
+            self.track_table_scheduled_task is None
+            or self.track_table_scheduled_task.done()
+        ):
+            self._load_track_table_to_plc(mode)
+        logger.warning("load_track_table bottom")  # TODO remove
 
-    def load_track_table_to_plc(self, mode):
+    def _load_track_table_to_plc(self, mode: int) -> None:
+        logger.warning("load_track_table_to_plc top")  # TODO remove
         tai_offset = 0
         if not self.track_table.real_times:
             tai_offset = self.attributes["Time_cds.Status.TAIoffset"].value
 
-        # First attempt to load all the track table at once on to the PLC
+        # Then keep calling until local track table is empty or PLC is full
+        stop_scheduling = threading.Event()
+        self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
+            self.__schedule_load_next_points(
+                mode, tai_offset, stop_scheduling
+            ),
+            self.event_loop,
+        )
+        self.stop_track_table_schedule_task_event = stop_scheduling
+        logger.warning("load_track_table_to_plc bottom")  # TODO remove
+
+    async def __schedule_load_next_points(
+        self, mode: int, tai_offset: float, stop_scheduling: threading.Event
+    ) -> None:
+        logger.warning("__schedule_load_next_points top")  # TODO remove
+        # One call in case mode is "New"
+        result = self._load_next_points(mode, tai_offset)
+
+        while not stop_scheduling.is_set() and result > -1:
+            if result not in (10, 9, 4):
+                # TODO error for other responses
+                break
+
+            if result == 4:
+                # 4: CommandFailed is returned when there is not enough space left
+                # in the PLC track table.
+                # Allow time for the loaded points to be consumed. Minimum time between
+                # points is 50ms, at that rate 1000 points would take 50 seconds. Check
+                # more often than this to ensure PLC does not run out of points.
+                logger.warning(
+                    "__schedule_load_next_points before sleep"
+                )  # TODO remove
+                await asyncio.sleep(45)
+
+            logger.warning("__schedule_load_next_points more")  # TODO remove
+            result = self._load_next_points()
+        logger.warning("__schedule_load_next_points bottom")  # TODO remove
+
+    def _load_next_points(self, mode: int = 0, tai_offset: float = 0) -> int:
+        logger.warning("_load_next_points top")  # TODO remove
         num, tai, azi, ele = self.track_table.get_next_points(1000, tai_offset)
-        logger.info(
-            "num = %s, len(tai) = %s, len(azi) = %s, len(ele) = %s",
-            num,
-            len(tai),
-            len(azi),
-            len(ele),
-        )
+        logger.warning(f"_load_next_points got {num} points")  # TODO remove
 
-        # One call to set mode
+        if num == 0:
+            self.track_table = None
+            logger.info("Sculib has loaded all track table points to the PLC.")
+            return -1
+
+        # The load track table accepts arrays of length 1000 only.
+        if num < 1000:
+            padding = [0] * (1000 - num)
+            tai.extend(padding)
+            azi.extend(padding)
+            ele.extend(padding)
+
+        with open("points_lists.txt", "w", encoding="UTF-8") as f:
+            print(f"tai: {tai}", file=f)
+            print(f"azi: {azi}", file=f)
+            print(f"ele: {ele}", file=f)
+        logger.warning(
+            f"_load_next_points attempting to send {num} points in mode {mode}"
+        )  # TODO remove
         result = self.commands["Tracking.Commands.TrackLoadTable"](
-            ua.UInt16(0), ua.UInt16(num), tai, azi, ele
+            ua.UInt16(mode), ua.UInt16(num), tai, azi, ele
         )
-        logger.warning(">>>>>>>>Load_track_table_to_plc result: %s", result)
-        # Then if we still have points left, repeatedely schedule until empty or
-        # discarded
+        logger.warning(
+            f"_load_next_points track load result: {result}"
+        )  # TODO remove
+        if result != 10:
+            # Failed to send points so restore index.
+            self.track_table.sent_index -= num
 
-    def track_table_reset_and_upload_from_file(self, file_name: str) -> None:
-        """
-        Direct upload a track table to the dish structure's OPC UA server.
+        logger.warning("_load_next_points bottom")  # TODO remove
+        return result
 
-        :param file_name: File name of the track table file including its path.
-        :type file_name: str
+    def start_tracking(
+        self, interpol: int = 0, start_time: float | None = None
+    ) -> CmdReturn:
         """
-        # pylint: disable=no-member
-        positions = self.load_track_table_file(file_name)
-        # Reset the currently loaded track table.
-        zero = numpy.zeros(1)
-        self.load_program_track(ua.LoadModeType.Reset, 0, zero, zero, zero)
-        # Submit the new track table.
-        self.load_program_track(
-            ua.LoadModeType.New,
-            len(positions),
-            positions[:, 0],
-            positions[:, 1],
-            positions[:, 2],
+        Start a loaded track table.
+
+        :param int interpol: The desired interpolation method.
+        :param float start_time: The track start time in seconds after SKAO Epoch (TAI
+            Offset).
+        :return CmdReturn: The response to TrackStart from the PLC.
+        """
+        result = self.commands["Tracking.Commands.TrackStart"](
+            ua.uint16(interpol), start_time
         )
+        return result
 
     # commands to DMC state - dish management controller
     def interlock_acknowledge_dmc(self) -> CmdReturn:
@@ -2156,131 +2231,6 @@ class SecondaryControlUnit:
             az_offset, el_offset
         )
 
-    def load_program_track(
-        self,
-        load_type: str,
-        entries: int,
-        t: numpy.ndarray,
-        az: numpy.ndarray,
-        el: numpy.ndarray,
-    ) -> CmdReturn:
-        """
-        Load a program track with provided entries, time offsets, azimuth and elevation.
-
-        :param load_type: Type of track data being loaded.
-        :type load_type: str
-        :param entries: Number of entries in the track table.
-        :type entries: int
-        :param t: List of time offset values.
-        :type t: numpy.ndarray
-        :param az: List of azimuth values.
-        :type az: numpy.ndarray
-        :param el: List of elevation values.
-        :type el: numpy.ndarray
-        :raises IndexError: If the provided track table contents are not aligned.
-        """
-        logger.info("%s", load_type)
-
-        # unused
-        # LOAD_TYPES = {
-        #     'LOAD_NEW' : 0,
-        #     'LOAD_ADD' : 1,
-        #     'LOAD_RESET' : 2}
-
-        # unused
-        # table selector - to tidy for future use
-        # ptrackA = 11
-        # TABLE_SELECTOR =  {
-        #     'pTrackA' : 11,
-        #     'pTrackB' : 12,
-        #     'oTrackA' : 21,
-        #     'oTrackB' : 22}
-
-        # unused
-        # funny thing is SCU wants 50 entries, even for LOAD RESET! or if you send less
-        # then you have to pad the table
-        # if entries != 50:
-        #     padding = 50 - entries
-        #     t  += [0] * padding
-        #     az += [0] * padding
-        #     el += [0] * padding
-
-        # pylint: disable=too-many-boolean-expressions
-        if (entries > 0) and (
-            (entries != len(t))
-            or (entries != len(az))
-            or (entries != len(el))
-            or (len(t) != len(az))
-            or (len(az) != len(el))
-            or (len(az) != len(el))
-        ):
-            e = IndexError()
-            msg = (
-                "The provided track table contents are not usable because the contents "
-                "are not aligned. The given number of track table entries and the size "
-                "of each of the three arrays (t, az and el) need to match: Specified "
-                "number of entries = %d, number of elements in time offset array = %d, "
-                "number of elements in azimuth array = %d, number of elements in "
-                "elevation array = %d."
-            )
-            logger.error(msg, entries, len(t), len(az), len(el))
-            raise e
-
-        # Format the track table in the new way that preceeds every row with
-        # its row number.
-        table = ""
-        for index in range(len(t)):  # pylint: disable=consider-using-enumerate
-            row = f"{index:03d}:{t[index]},{az[index]},{el[index]};"
-            table += row
-        logger.debug(f"Track table that will be sent to DS: {table}")
-        byte_string = table.encode()
-        try:
-            return self.commands[Command.TRACK_LOAD_TABLE.value](
-                load_type,
-                ua.UInt16(entries),
-                ua.ByteString(byte_string),
-            )
-        except Exception:
-            logger.warning(
-                "Tried to upload a track table in the new format but this failed. "
-                "Will now try to uplad the track table in the old format...",
-                exc_info=True,
-            )
-
-        # If I get here, then the OPC UA server likely did not support the new
-        # format. Try again with the old format.
-        table = ""
-        table = f"{entries:03d}:"
-        for index in range(0, entries):
-            row = f"{t[index]},{az[index]},{el[index]};"
-            table += row
-        logger.debug(f"Track table that will be sent to DS: {table}")
-        byte_string = table.encode()
-        try:
-            return self.commands[Command.TRACK_LOAD_TABLE.value](
-                load_type,
-                ua.UInt16(entries),
-                ua.ByteString(byte_string),
-            )
-        except Exception as e:
-            logger.exception(
-                "Uploading of a track table in the old format failed too. "
-                "Please check that your track table is correctly formatted, "
-                "not empty and contains valid entries."
-            )
-            raise e
-
-    def start_program_track(self, interpol_mode: int) -> CmdReturn:
-        """
-        Start tracking a program.
-
-        :return: The result of starting the program track.
-        """
-        # TODO
-        return self.commands[Command.TRACK_START.value](
-            ua.UInt16(interpol_mode)
-        )
-
     def acu_ska_track(self) -> CmdReturn:
         """ACU SKA track."""
         # TODO
@@ -2415,15 +2365,15 @@ class TrackTable:
     """
 
     def __init__(self) -> None:
-        self.file_name: str | None = None
-        self.additional_offset: float
-        self.tai = []
-        self.azi = []
-        self.ele = []
-        self.real_times: bool
-        self.in_use = False
+        self.tai: list[float] = []
+        self.azi: list[float] = []
+        self.ele: list[float] = []
+        self.real_times: bool = True
         self.tai_offset: float = 0
-        self.sent_index = 0
+        self.additional_offset: float
+        self.in_use = False
+        self.sent_index: int = 0
+        self.__points_lock = threading.Lock()
 
     def store_from_csv(
         self,
@@ -2432,8 +2382,18 @@ class TrackTable:
         additional_offset: float = 5,
     ) -> None:
         """
-        Load a track table from a CSV file, storing the points in
+        Load a track table from a CSV file, storing the points in lists.
+
+        :param str file_name: File name of the track table file including its path.
+        :param bool real_times: Whether the time column is a real time or a relative
+            time. Default False.
+        :param float additional_offset: Add additional time to every point. Only has an
+            effect when real_times is False. Default 5.
         """
+        logger.warning("store_from_csv top")  # TODO remove
+        tai = []
+        azi = []
+        ele = []
         try:
             # Load the track table file.
             with open(file_name, "r", encoding="utf-8") as f:
@@ -2442,20 +2402,17 @@ class TrackTable:
                 for line in f:
                     # Remove a trailing '\n' and split the line at every ','.
                     cleaned_line = line.rstrip("\n").split(",")
-                    self.tai.append(float(cleaned_line[0]))
-                    self.azi.append(float(cleaned_line[1]))
-                    self.ele.append(float(cleaned_line[2]))
+                    tai.append(float(cleaned_line[0]))
+                    azi.append(float(cleaned_line[1]))
+                    ele.append(float(cleaned_line[2]))
 
-            # Mark whether the point time needs to be converted to an offset
-            # before it can be sent to the PLC
-            self.real_times = real_times
         except Exception as e:
             logger.error(
                 "Could not load or convert the track table file '%s': %s",
                 file_name,
                 e,
             )
-            raise e
+            return
 
         if not len(self.tai) == len(self.azi) == len(self.ele):
             logger.error(
@@ -2463,13 +2420,41 @@ class TrackTable:
                 "load track table file %s",
                 file_name,
             )
-            # TODO: Raise exception?
+            return
 
-        self.file_name = file_name
+        self.__points_lock.acquire()
+        self.tai.extend(tai)
+        self.azi.extend(azi)
+        self.ele.extend(ele)
+        logger.warning(
+            "store_from_csv stored %s points", len(tai)
+        )  # TODO remove
+        self.__points_lock.release()
+        self.real_times = real_times
         self.additional_offset = additional_offset
+        logger.warning("store_from_csv bottom")  # TODO remove
 
-    def add_from_list(self, tai, azi, ele):
-        pass
+    def store_from_list(
+        self, tai: list[float], azi: list[float], ele: list[float]
+    ) -> None:
+        """
+        Load a track table from input lists file, storing the points in lists.
+
+        :param list[float] tai: A list of times to make up the track table points.
+        :param list[float] azi: A list of azimuths to make up the track table points.
+        :param list[float] ele: A list of elevations to make up the track table points.
+        """
+        if not len(tai) == len(azi) == len(ele):
+            logger.error(
+                "TAI, azimuth, and elevation lists are different lengths, could not"
+                "load track table lists."
+            )
+            return
+        self.__points_lock.acquire()
+        self.tai.extend(tai)
+        self.azi.extend(azi)
+        self.ele.extend(ele)
+        self.__points_lock.release()
 
     def get_next_points(
         self, num_points: int, tai_offset: float | None = None
@@ -2480,13 +2465,17 @@ class TrackTable:
 
         tai_offset is set on the first call, and ignored for subsequent calls.
         """
+        logger.warning("get_next_points top")  # TODO remove
         if not self.in_use:
             self.in_use = True
             if tai_offset is not None:
                 self.tai_offset = tai_offset
 
-        # Stored times are relative to tai_offset
-        if not self.real_times:
+        self.__points_lock.acquire()
+        if self.real_times:
+            tai = self.tai[self.sent_index : self.sent_index + num_points]
+        else:
+            # Stored times are relative to tai_offset
             tai = [
                 tai_string + self.tai_offset + self.additional_offset
                 for tai_string in self.tai[
@@ -2496,6 +2485,8 @@ class TrackTable:
 
         azi = self.azi[self.sent_index : self.sent_index + num_points]
         ele = self.ele[self.sent_index : self.sent_index + num_points]
+        self.__points_lock.release()
         length = len(tai)
         self.sent_index += length
+        logger.warning("get_next_points bottom")  # TODO remove
         return length, tai, azi, ele
