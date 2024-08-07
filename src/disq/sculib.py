@@ -18,7 +18,6 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Final, Type, TypedDict
 
-import numpy
 import yaml  # type: ignore
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
@@ -1851,7 +1850,7 @@ class SecondaryControlUnit:
 
     def load_track_table(
         self,
-        mode: int = 0,
+        mode: str | int = 0,
         tai: list[float] = [],
         azi: list[float] = [],
         ele: list[float] = [],
@@ -1874,7 +1873,12 @@ class SecondaryControlUnit:
             effect when real_times is False. Default 10.1
         """
         logger.warning("load_track_table top")  # TODO remove
-        if mode == 1:  # New track table
+        mode_int = (
+            self.convert_enum_to_int("LoadModeType", mode)
+            if isinstance(mode, str)
+            else mode
+        )
+        if mode_int == 1:  # New track table
             if self.stop_track_table_schedule_task_event is not None:
                 self.stop_track_table_schedule_task_event.set()
 
@@ -1899,7 +1903,7 @@ class SecondaryControlUnit:
             self.track_table_scheduled_task is None
             or self.track_table_scheduled_task.done()
         ):
-            self._load_track_table_to_plc(mode)
+            self._load_track_table_to_plc(mode_int)
         logger.warning("load_track_table bottom")  # TODO remove
 
     def _load_track_table_to_plc(self, mode: int) -> None:
@@ -1984,18 +1988,30 @@ class SecondaryControlUnit:
         return result
 
     def start_tracking(
-        self, interpol: int = 0, start_time: float | None = None
+        self,
+        interpol: str | int = 0,
+        now: bool = True,
+        start_time: float | None = None,
     ) -> CmdReturn:
         """
         Start a loaded track table.
 
-        :param int interpol: The desired interpolation method.
+        :param int interpol: The desired interpolation method. Defaults to 0; Spline.
+        :param bool now: Whether to start tracking immediately or not. Default True.
         :param float start_time: The track start time in seconds after SKAO Epoch (TAI
-            Offset).
+            Offset). Only applicable if now is False.
         :return CmdReturn: The response to TrackStart from the PLC.
         """
+        interpol_int = (
+            self.convert_enum_to_int("InterpolType", interpol)
+            if isinstance(interpol, str)
+            else interpol
+        )
+        if now:
+            start_time = self.attributes["Time_cds.Status.TAIoffset"].value
+
         result = self.commands["Tracking.Commands.TrackStart"](
-            ua.uint16(interpol), start_time
+            ua.UInt16(interpol_int), start_time
         )
         return result
 
@@ -2394,33 +2410,50 @@ class TrackTable:
         tai = []
         azi = []
         ele = []
+        current_line = 1
         try:
             # Load the track table file.
             with open(file_name, "r", encoding="utf-8") as f:
                 # Skip the header line because it does not contain a position.
                 _ = f.readline()
+                current_line += 1
                 for line in f:
                     # Remove a trailing '\n' and split the line at every ','.
                     cleaned_line = line.rstrip("\n").split(",")
-                    tai.append(float(cleaned_line[0]))
-                    azi.append(float(cleaned_line[1]))
-                    ele.append(float(cleaned_line[2]))
+                    try:
+                        tai.append(float(cleaned_line[0]))
+                    except IndexError as e:
+                        raise IndexError(0) from e
 
+                    try:
+                        azi.append(float(cleaned_line[1]))
+                    except IndexError as e:
+                        raise IndexError(1) from e
+
+                    try:
+                        ele.append(float(cleaned_line[2]))
+                    except IndexError as e:
+                        raise IndexError(2) from e
+
+                    if len(cleaned_line) > 3:
+                        raise ValueError(
+                            f"Malformed CSV file, line {current_line} is "
+                            "too long."
+                        )
+
+                    current_line += 1
+        except IndexError as e:
+            logger.error(e)
+            column = ["Time", "Azimuth", "Elevation"][int(e.args[0])]
+            message = f"{column} missing on line {current_line}"
+            raise IndexError(message) from e
         except Exception as e:
             logger.error(
                 "Could not load or convert the track table file '%s': %s",
                 file_name,
                 e,
             )
-            return
-
-        if not len(self.tai) == len(self.azi) == len(self.ele):
-            logger.error(
-                "TAI, azimuth, and elevation columns are different lengths, could not"
-                "load track table file %s",
-                file_name,
-            )
-            return
+            raise
 
         self.__points_lock.acquire()
         self.tai.extend(tai)
