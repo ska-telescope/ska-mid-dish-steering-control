@@ -469,7 +469,7 @@ class SecondaryControlUnit:
         self.server_attributes: AttrDict
         self.server_commands: CmdDict
         self.track_load_node: Node
-        self.track_table: TrackTable = TrackTable()
+        self.track_table: TrackTable | None = None
         self.stop_track_table_schedule_task_event: threading.Event | None = None
         self.track_table_scheduled_task: concurrent.futures.Future | None = None
 
@@ -1804,19 +1804,26 @@ class SecondaryControlUnit:
             if self.stop_track_table_schedule_task_event is not None:
                 self.stop_track_table_schedule_task_event.set()
 
-            self.track_table = TrackTable()
+            self.track_table = None
             self.track_table_scheduled_task = None
+
+        if self.track_table is None:
+            table_args: list[Any] = [real_times]
+            if not real_times:
+                table_args.append(additional_offset)
+                table_args.append(self.attributes["Time_cds.Status.TAIoffset"].value)
+            self.track_table = TrackTable(*table_args)
 
         if len(tai) > 0:
             self.track_table.store_from_list(tai, azi, ele)
         elif file_name is not None:
-            self.track_table.store_from_csv(file_name, real_times, additional_offset)
+            self.track_table.store_from_csv(file_name)
         else:
             logger.error("Missing track table points, cannot load track table.")
             return
 
         # Rely on scheduled track table task to send appended values if it is still
-        # running.
+        # running (inadequate space on PLC to load all stored points).
         if (
             self.track_table_scheduled_task is None
             or self.track_table_scheduled_task.done()
@@ -1824,16 +1831,10 @@ class SecondaryControlUnit:
             self._load_track_table_to_plc(mode_int)
 
     def _load_track_table_to_plc(self, mode: int) -> None:
-        tai_offset = 0
-        if not self.track_table.real_times:
-            tai_offset = self.attributes["Time_cds.Status.TAIoffset"].value
-
         first_load = threading.Event()
         stop_scheduling = threading.Event()
         self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
-            self.__schedule_load_next_points(
-                mode, tai_offset, first_load, stop_scheduling
-            ),
+            self.__schedule_load_next_points(mode, first_load, stop_scheduling),
             self.event_loop,
         )
         self.stop_track_table_schedule_task_event = stop_scheduling
@@ -1844,19 +1845,18 @@ class SecondaryControlUnit:
     async def __schedule_load_next_points(
         self,
         mode: int,
-        tai_offset: float,
         first_load: threading.Event,
         stop_scheduling: threading.Event,
     ) -> None:
         # One call in case mode is "New"
-        result = self._load_next_points(mode, tai_offset)
+        result = await self._load_next_points(mode)
         first_load.set()
-
         # Then keep calling until local track table is empty or PLC is full
         while not stop_scheduling.is_set() and result > -1:
-            if result not in (10, 9, 4):
+            if result not in (10, 9, 4) or result is None:
                 logger.error(
-                    "Failed to load all track points to PLC. %s remaining.",
+                    "Failed to load all track points to PLC (%s). %s remaining.",
+                    result,
                     self.track_table.remaining_points(),
                 )
                 break
@@ -1871,12 +1871,11 @@ class SecondaryControlUnit:
 
             result = await self._load_next_points()
 
-    async def _load_next_points(self, mode: int = 0, tai_offset: float = 0) -> int:
-        num, tai, azi, ele = self.track_table.get_next_points(1000, tai_offset)
+    async def _load_next_points(self, mode: int = 0) -> int:
+        num, tai, azi, ele = self.track_table.get_next_points(1000)
         logger.debug(f"_load_next_points got {num} points")
 
         if num == 0:
-            self.track_table = None
             logger.info("Sculib has loaded all track table points to the PLC.")
             return -1
 
@@ -2290,23 +2289,26 @@ class TrackTable:
     the lists, the same in each list.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        real_times: bool = False,
+        additional_offset: float = 0,
+        tai_offset: float = 0,
+    ) -> None:
         """Initialise TrackTable"""
         self.tai: list[float] = []
         self.azi: list[float] = []
         self.ele: list[float] = []
-        self.real_times: bool = True
-        self.tai_offset: float = 0
-        self.additional_offset: float
-        self.in_use = False
+        self.real_times = real_times
+        self.additional_offset = additional_offset
+        self.tai_offset = tai_offset
         self.sent_index: int = 0
         self.__points_lock = threading.Lock()
+        logger.debug("New TrackTable initialised.")
 
     def store_from_csv(
         self,
         file_name: str,
-        real_times: bool = False,
-        additional_offset: float = 5,
     ) -> None:
         """
         Load a track table from a CSV file, storing the points in lists.
@@ -2347,7 +2349,7 @@ class TrackTable:
 
                     if len(cleaned_line) > 3:
                         raise ValueError(
-                            f"Malformed CSV file, line {current_line} is " "too long."
+                            f"Malformed CSV file, line {current_line} is too long."
                         )
 
                     current_line += 1
@@ -2370,11 +2372,12 @@ class TrackTable:
         self.ele.extend(ele)
         logger.debug("Stored %s track table points", len(tai))
         self.__points_lock.release()
-        self.real_times = real_times
-        self.additional_offset = additional_offset
 
     def store_from_list(
-        self, tai: list[float], azi: list[float], ele: list[float]
+        self,
+        tai: list[float],
+        azi: list[float],
+        ele: list[float],
     ) -> None:
         """
         Load a track table from input lists file, storing the points in lists.
@@ -2398,7 +2401,7 @@ class TrackTable:
         self.__points_lock.release()
 
     def get_next_points(
-        self, num_points: int, tai_offset: float | None = None
+        self, num_points: int
     ) -> tuple[int, list[float], list[float], list[float]]:
         """
         Get the next num_points of stored points, or the remaining stored points if
@@ -2412,11 +2415,6 @@ class TrackTable:
         :return tuple: The number of points retrieved from the stored points, and a list
             of each point data.
         """
-        if not self.in_use:
-            self.in_use = True
-            if tai_offset is not None:
-                self.tai_offset = tai_offset
-
         self.__points_lock.acquire()
         if self.real_times:
             tai = self.tai[self.sent_index : self.sent_index + num_points]
@@ -2443,6 +2441,6 @@ class TrackTable:
         :return int: The number of points remaining.
         """
         self.__points_lock.acquire()
-        points = self.sent_index - len(self.tai)
+        points = len(self.tai) - self.sent_index
         self.__points_lock.release()
         return points
