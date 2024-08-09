@@ -1778,11 +1778,24 @@ class SecondaryControlUnit:
         azi: list[float] = [],
         ele: list[float] = [],
         file_name: str | None = None,
-        real_times: bool = True,
+        absolute_times: bool = True,
         additional_offset: float = 10.1,  # TODO Return to 5 when PLCs updated
     ) -> None:
         """
-        Upload a track table to the PLC from lists. List lengths must match.
+        Upload a track table to the PLC from lists OR a CSV file.
+
+        Number of points for tai, azimuth, and elevation must be equal.
+        Supports modes New and Append for lists, and New only for a CSV file.
+        Although a PLC can only hold a maximum of 10,000 points at a time, the lists or
+        CSV file can contain an arbritary number of points and this function will
+        store them all locally and load them to the PLC when space is made avaiable by
+        the PLC consuming loaded points when tracking has been started. However a
+        subsequent call with mode 1: "New" will cancel any points waiting to be
+        loaded.
+        For tests that generate points just-in-time use lists. First call this method
+        with mode 1: "New", then make all subsequent calls with mode 2: "Append".
+        If absolute_times is false, the value of Time_cds.Status.TAIoffset will be
+        retrieved from the PLC and added to the tai times supplied.
 
         :param int mode: Choose from 0 for Append, and 1 for New. Default is Append.
           # TODO add reset.
@@ -1790,16 +1803,23 @@ class SecondaryControlUnit:
         :param list[float] azi: A list of azimuths to make up the track table points.
         :param list[float] ele: A list of elevations to make up the track table points.
         :param str file_name: File name of the track table file including its path.
-        :param bool real_times: Whether the time column is a real time or a relative
+        :param bool absolute_times: Whether the time column is a real time or a relative
             time. Default True.
         :param float additional_offset: Add additional time to every point. Only has an
-            effect when real_times is False. Default 10.1
+            effect when absolute_times is False. Default 10.1
         """
         mode_int = (
             self.convert_enum_to_int("LoadModeType", mode)
             if isinstance(mode, str)
             else mode
         )
+        if file_name is not None and mode_int == 0 and not absolute_times:
+            logger.error(
+                "Cannot append a track table file with relative times. Please "
+                "use mode 1: 'New'"
+            )
+            return
+
         if mode_int == 1:  # New track table
             if self.stop_track_table_schedule_task_event is not None:
                 self.stop_track_table_schedule_task_event.set()
@@ -1808,10 +1828,14 @@ class SecondaryControlUnit:
             self.track_table_scheduled_task = None
 
         if self.track_table is None:
-            table_args: list[Any] = [real_times]
-            if not real_times:
+            table_args: list[Any] = [absolute_times]
+            if not absolute_times:
                 table_args.append(additional_offset)
-                table_args.append(self.attributes["Time_cds.Status.TAIoffset"].value)
+                table_args.append(
+                    self.attributes[
+                        "Time_cds.Status.TAIoffset"
+                    ].value  # type: ignore[attr-defined]
+                )
             self.track_table = TrackTable(*table_args)
 
         if len(tai) > 0:
@@ -1907,7 +1931,7 @@ class SecondaryControlUnit:
         interpol: str | int = 0,
         now: bool = True,
         start_time: float | None = None,
-    ) -> CmdReturn:
+    ) -> tuple[ResultCode, str]:
         """
         Start a loaded track table.
 
@@ -1923,12 +1947,14 @@ class SecondaryControlUnit:
             else interpol
         )
         if now:
-            start_time = self.attributes["Time_cds.Status.TAIoffset"].value
+            start_time = self.attributes[
+                "Time_cds.Status.TAIoffset"
+            ].value  # type: ignore[attr-defined]
 
-        result = self.commands["Tracking.Commands.TrackStart"](
+        code, msg, _ = self.commands["Tracking.Commands.TrackStart"](
             ua.UInt16(interpol_int), start_time
         )
-        return result
+        return code, msg
 
     # commands to DMC state - dish management controller
     def interlock_acknowledge_dmc(self) -> CmdReturn:
@@ -2158,50 +2184,6 @@ class SecondaryControlUnit:
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
         return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](az_offset, el_offset)
 
-    def acu_ska_track(self) -> CmdReturn:
-        """ACU SKA track."""
-        # TODO
-        logger.info("acu ska track")
-        return self.commands[Command.TRACK_LOAD_TABLE.value](ua.UInt16(0))
-
-    def _format_tt_line(
-        self,
-        t: float,
-        az: float,
-        el: float,
-        capture_flag: int = 1,
-        parallactic_angle: float = 0.0,
-    ) -> str:
-        """
-        Something will provide a time, az, and el as minimum.
-
-        Time must already be absolute time desired in MJD format. Assumption is capture
-        flag and parallactic angle will not be used.
-        """
-        f_str = (
-            f"{t:.12f} {az:.6f} {el:.6f} {capture_flag:.0f} "
-            "{parallactic_angle:.6f}\n"
-        )
-        return f_str
-
-    def _format_body(self, t: list[float], az: list[float], el: list[float]) -> str:
-        """
-        Format the body of a message with timestamp, azimuth, and elevation values.
-
-        :param t: List of timestamps.
-        :type t: list
-        :param az: List of azimuth values.
-        :type az: list
-        :param el: List of elevation values.
-        :type el: list
-        :return: Formatted body of the message.
-        :rtype: str
-        """
-        body = ""
-        for i in range(len(t)):  # pylint: disable=consider-using-enumerate
-            body += self._format_tt_line(t[i], az[i], el[i])
-        return body
-
 
 # pylint: disable=too-many-arguments, invalid-name
 def SCU(  # noqa: N802
@@ -2284,22 +2266,23 @@ def SCU_from_config(  # noqa: N802
 
 class TrackTable:
     """
-    Store all the TAI, Azimuth, Elevation points loaded from a track table file in
-    individual lists. A single point can be referred to by the index it's data takes in
+    Store all the TAI, Azimuth, Elevation points in individual lists.
+
+    A single point can be referred to by the index its data takes in
     the lists, the same in each list.
     """
 
     def __init__(
         self,
-        real_times: bool = False,
+        absolute_times: bool = False,
         additional_offset: float = 0,
         tai_offset: float = 0,
     ) -> None:
-        """Initialise TrackTable"""
+        """Initialise TrackTable."""
         self.tai: list[float] = []
         self.azi: list[float] = []
         self.ele: list[float] = []
-        self.real_times = real_times
+        self.absolute_times = absolute_times
         self.additional_offset = additional_offset
         self.tai_offset = tai_offset
         self.sent_index: int = 0
@@ -2314,10 +2297,10 @@ class TrackTable:
         Load a track table from a CSV file, storing the points in lists.
 
         :param str file_name: File name of the track table file including its path.
-        :param bool real_times: Whether the time column is a real time or a relative
+        :param bool absolute_times: Whether the time column is a real time or a relative
             time. Default False.
         :param float additional_offset: Add additional time to every point. Only has an
-            effect when real_times is False. Default 5.
+            effect when absolute_times is False. Default 5.
         """
         tai = []
         azi = []
@@ -2366,12 +2349,7 @@ class TrackTable:
             )
             raise
 
-        self.__points_lock.acquire()
-        self.tai.extend(tai)
-        self.azi.extend(azi)
-        self.ele.extend(ele)
-        logger.debug("Stored %s track table points", len(tai))
-        self.__points_lock.release()
+        self.store_from_list(tai, azi, ele)
 
     def store_from_list(
         self,
@@ -2393,21 +2371,19 @@ class TrackTable:
             )
             return
 
-        self.__points_lock.acquire()
-        self.tai.extend(tai)
-        self.azi.extend(azi)
-        self.ele.extend(ele)
-        logger.debug("Stored %s track table points", len(tai))
-        self.__points_lock.release()
+        with self.__points_lock:
+            self.tai.extend(tai)
+            self.azi.extend(azi)
+            self.ele.extend(ele)
+            logger.debug("Stored %s track table points", len(tai))
 
     def get_next_points(
         self, num_points: int
     ) -> tuple[int, list[float], list[float], list[float]]:
         """
-        Get the next num_points of stored points, or the remaining stored points if
-        num_points is greater than the remainder. tai_offset is set on the first call,
-        and ignored for subsequent calls.
+        Get the next num_points of stored points, or the remainder.
 
+        tai_offset is set on the first call, and ignored for subsequent calls.
 
         :param int num_points: Number of points to get from stored track points.
         :param float tai_offset: The difference in time between now and SKAO epoch in
@@ -2415,23 +2391,23 @@ class TrackTable:
         :return tuple: The number of points retrieved from the stored points, and a list
             of each point data.
         """
-        self.__points_lock.acquire()
-        if self.real_times:
-            tai = self.tai[self.sent_index : self.sent_index + num_points]
-        else:
-            # Stored times are relative to tai_offset
-            tai = [
-                tai_string + self.tai_offset + self.additional_offset
-                for tai_string in self.tai[
-                    self.sent_index : self.sent_index + num_points
+        with self.__points_lock:
+            if self.absolute_times:
+                tai = self.tai[self.sent_index : self.sent_index + num_points]
+            else:
+                # Stored times are relative to tai_offset
+                tai = [
+                    tai_string + self.tai_offset + self.additional_offset
+                    for tai_string in self.tai[
+                        self.sent_index : self.sent_index + num_points
+                    ]
                 ]
-            ]
 
-        azi = self.azi[self.sent_index : self.sent_index + num_points]
-        ele = self.ele[self.sent_index : self.sent_index + num_points]
-        self.__points_lock.release()
-        length = len(tai)
-        self.sent_index += length
+            azi = self.azi[self.sent_index : self.sent_index + num_points]
+            ele = self.ele[self.sent_index : self.sent_index + num_points]
+            length = len(tai)
+            self.sent_index += length
+
         return length, tai, azi, ele
 
     def remaining_points(self) -> int:
@@ -2440,7 +2416,7 @@ class TrackTable:
 
         :return int: The number of points remaining.
         """
-        self.__points_lock.acquire()
-        points = len(self.tai) - self.sent_index
-        self.__points_lock.release()
+        with self.__points_lock:
+            points = len(self.tai) - self.sent_index
+
         return points
