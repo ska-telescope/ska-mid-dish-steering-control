@@ -2,7 +2,6 @@
 
 # pylint: disable=too-many-lines, broad-exception-caught
 import asyncio
-import concurrent
 import datetime
 import enum
 import json
@@ -12,6 +11,7 @@ import queue
 import socket
 import threading
 import time
+from concurrent.futures import Future
 from enum import Enum
 from functools import cached_property
 from importlib import resources
@@ -472,7 +472,7 @@ class SecondaryControlUnit:
         self.track_load_node: Node
         self.track_table: TrackTable | None = None
         self.stop_track_table_schedule_task_event: threading.Event | None = None
-        self.track_table_scheduled_task: concurrent.futures.Future | None = None
+        self.track_table_scheduled_task: Future | None = None
 
     def connect_and_setup(self) -> None:
         """
@@ -787,7 +787,7 @@ class SecondaryControlUnit:
         :param user: Authority user name - DscCmdAuthorityType enum.
         :type user: str | int (ua.DscCmdAuthorityType)
         :return: The result of the command execution.
-        :rtype: tuple[int, str]
+        :rtype: tuple[ResultCode, str]
         """
         user_int = (
             self.convert_enum_to_int("DscCmdAuthorityType", user)
@@ -819,7 +819,7 @@ class SecondaryControlUnit:
         Release command authority.
 
         :return: The result of the command execution.
-        :rtype: tuple[int, str]
+        :rtype: tuple[ResultCode, str]
         """
         if self._user is not None and self._session_id is not None:
             code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
@@ -1028,21 +1028,9 @@ class SecondaryControlUnit:
                     result_output = result
                 else:
                     result_code_int = result
-                # Check for valid result code
-                result_code = (
-                    ResultCode(result_code_int)
-                    if result_code_int in ResultCode.__members__.values()
-                    else ResultCode.UNKNOWN
+                result_code, result_msg = self._validate_command_result_code(
+                    result_code_int
                 )
-                # Set result message
-                if result_code != ResultCode.UNKNOWN:
-                    result_msg = (
-                        ua.CmdResponseType(result_code).name
-                        if hasattr(ua, "CmdResponseType")
-                        else result_code.name
-                    )
-                else:
-                    result_msg = result_code.name
                 # Handle specific result codes
                 if result_code == ResultCode.UNKNOWN:
                     logger.warning(
@@ -1079,6 +1067,32 @@ class SecondaryControlUnit:
             return result_code, result_msg, result_output
 
         return fn
+
+    def _validate_command_result_code(self, result_code: int) -> tuple[ResultCode, str]:
+        """
+        Validate a command's result code and return a ResultCode enum and string value.
+
+        :param result_code: Raw command result code integer
+        :type result_code: int
+        :return: A tuple containing the ResultCode enum and message.
+        :rtype: tuple[ResultCode, str]
+        """
+        # Check for valid result code
+        result_enum = (
+            ResultCode(result_code)
+            if result_code in ResultCode.__members__.values()
+            else ResultCode.UNKNOWN
+        )
+        # Set result message
+        if result_enum != ResultCode.UNKNOWN:
+            result_msg = (
+                ua.CmdResponseType(result_enum).name
+                if hasattr(ua, "CmdResponseType")
+                else result_enum.name
+            )
+        else:
+            result_msg = result_enum.name
+        return result_enum, result_msg
 
     def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
         """
@@ -1270,7 +1284,10 @@ class SecondaryControlUnit:
             # TrackLoadTable is scheduled in its own async method. All calls to
             # TrackLoadTable should go through said method so do not add it to commands
             # dict.
-            if node_id == "ns=2;s=Application.PLC_PRG.Tracking.Commands.TrackLoadTable":
+            if (
+                node_id == f"ns={self.ns_idx};s=Application.PLC_PRG."
+                f"{Command.TRACK_LOAD_TABLE.value}"
+            ):
                 self.track_load_node = node
                 continue
 
@@ -1782,7 +1799,8 @@ class SecondaryControlUnit:
         file_name: str | None = None,
         absolute_times: bool = True,
         additional_offset: float = 10.1,  # TODO Return to 5 when PLCs updated
-    ) -> None:
+        result_callback: Callable[[ResultCode, str], None] | None = None,
+    ) -> tuple[ResultCode, str]:
         """
         Upload a track table to the PLC from lists OR a CSV file.
 
@@ -1809,18 +1827,26 @@ class SecondaryControlUnit:
             time. Default True.
         :param float additional_offset: Add additional time to every point. Only has an
             effect when absolute_times is False. Default 10.1
+        :param result_callback: Callback with result code and message when task finishes
+        :return: The result of the command execution.
+        :rtype: tuple[ResultCode, str]
         """
+        if self._session_id is None:
+            msg = "Need to take command authority before loading a track table."
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
         mode_int = (
             self.convert_enum_to_int("LoadModeType", mode)
             if isinstance(mode, str)
             else mode
         )
         if file_name is not None and mode_int == 0 and not absolute_times:
-            logger.error(
+            msg = (
                 "Cannot append a track table file with relative times. Please "
                 "use mode 1: 'New'"
             )
-            return
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
 
         if mode_int == 1:  # New track table
             if self.stop_track_table_schedule_task_event is not None:
@@ -1845,8 +1871,9 @@ class SecondaryControlUnit:
         elif file_name is not None:
             self.track_table.store_from_csv(file_name)
         else:
-            logger.error("Missing track table points, cannot load track table.")
-            return
+            msg = "Missing track table points."
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
 
         # Rely on scheduled track table task to send appended values if it is still
         # running (inadequate space on PLC to load all stored points).
@@ -1854,56 +1881,91 @@ class SecondaryControlUnit:
             self.track_table_scheduled_task is None
             or self.track_table_scheduled_task.done()
         ):
-            self._load_track_table_to_plc(mode_int)
+            return self._load_track_table_to_plc(mode_int, result_callback)
+        return ResultCode.NOT_EXECUTED, "Previous track table load task still running."
 
-    def _load_track_table_to_plc(self, mode: int) -> None:
+    def _load_track_table_to_plc(
+        self,
+        mode: int,
+        result_callback: Callable[[ResultCode, str], None] | None = None,
+    ) -> tuple[ResultCode, str]:
         first_load = threading.Event()
         stop_scheduling = threading.Event()
         self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
-            self.__schedule_load_next_points(mode, first_load, stop_scheduling),
+            self._schedule_load_next_points(
+                mode, first_load, stop_scheduling, result_callback
+            ),
             self.event_loop,
         )
         self.stop_track_table_schedule_task_event = stop_scheduling
-        if not first_load.wait(10):
+        if not first_load.wait(3):
             stop_scheduling.set()
-            logger.error("Timed out while attempting to load track table to PLC.")
+            msg = "Timed out while attempting to start loading the track table."
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
+        return (
+            ResultCode.UNKNOWN,
+            f"Started to load {len(self.track_table.tai)} track table points in batches"
+            ". Please wait...",
+        )
 
-    async def __schedule_load_next_points(
+    async def _schedule_load_next_points(
         self,
         mode: int,
         first_load: threading.Event,
         stop_scheduling: threading.Event,
+        result_callback: Callable[[ResultCode, str], None] | None = None,
     ) -> None:
         # One call in case mode is "New"
-        result = await self._load_next_points(mode)
+        result_code, result_msg = await self._load_next_points(mode)
         first_load.set()
         # Then keep calling until local track table is empty or PLC is full
-        while not stop_scheduling.is_set() and result > -1:
-            if result not in (10, 9, 4) or result is None:
+        while not stop_scheduling.is_set() and result_code not in (
+            ResultCode.NOT_EXECUTED,
+            ResultCode.ENTIRE_TRACK_TABLE_LOADED,
+        ):
+            if (
+                result_code
+                not in (
+                    ResultCode.COMMAND_DONE,
+                    ResultCode.COMMAND_ACTIVATED,
+                    ResultCode.COMMAND_FAILED,
+                )
+                or result_code == ResultCode.UNKNOWN
+            ):
                 logger.error(
                     "Failed to load all track points to PLC (%s). %s remaining.",
-                    result,
+                    result_code,
                     self.track_table.remaining_points(),
                 )
                 break
-
-            if result == 4:
-                # 4: CommandFailed is returned when there is not enough space left
+            if result_code == ResultCode.COMMAND_FAILED:
+                # CommandFailed is returned when there is not enough space left
                 # in the PLC track table.
                 # Allow time for the loaded points to be consumed. Minimum time between
                 # points is 50ms, at that rate 1000 points would take 50 seconds. Check
                 # more often than this to ensure PLC does not run out of points.
+                if result_callback:
+                    result_callback(
+                        result_code,
+                        "PLC track table full, waiting for loaded points to be "
+                        "consumed...",
+                    )
                 await asyncio.sleep(45)
+            result_code, result_msg = await self._load_next_points()
+        logger.info("Async track table loading: %s", result_msg)
+        if result_callback:
+            result_callback(result_code, result_msg)
 
-            result = await self._load_next_points()
-
-    async def _load_next_points(self, mode: int = 0) -> int:
+    async def _load_next_points(self, mode: int = 0) -> tuple[ResultCode, str]:
         num, tai, azi, ele = self.track_table.get_next_points(1000)
         logger.debug(f"_load_next_points got {num} points")
 
         if num == 0:
-            logger.info("Sculib has loaded all track table points to the PLC.")
-            return -1
+            return (
+                ResultCode.ENTIRE_TRACK_TABLE_LOADED,
+                "Finished loading all track table points to the PLC.",
+            )
 
         # The TrackLoadTable node accepts arrays of length 1000 only.
         if num < 1000:
@@ -1914,19 +1976,21 @@ class SecondaryControlUnit:
 
         load_call = self.track_load_node.call_method
         load_args = [
-            ua.UInt16(self._session_id),
+            self._session_id,
             ua.UInt16(mode),  # 0 append, 1 new, TODO 2 reset
             ua.UInt16(num),
             tai,
             azi,
             ele,
         ]
-        result = await load_call(self.track_load_node, *load_args)
-        if result not in (10, 9):
+        if self._session_id is None:
+            return ResultCode.NOT_EXECUTED, "Lost authority while loading track table."
+        result_code_int = await load_call(self.track_load_node, *load_args)
+        result_code, result_msg = self._validate_command_result_code(result_code_int)
+        if result_code not in (ResultCode.COMMAND_DONE, ResultCode.COMMAND_ACTIVATED):
             # Failed to send points so restore index.
             self.track_table.sent_index -= num
-
-        return result
+        return result_code, result_msg
 
     def start_tracking(
         self,
@@ -1953,7 +2017,7 @@ class SecondaryControlUnit:
                 "Time_cds.Status.TAIoffset"
             ].value  # type: ignore[attr-defined]
 
-        code, msg, _ = self.commands["Tracking.Commands.TrackStart"](
+        code, msg, _ = self.commands[Command.TRACK_START.value](
             ua.UInt16(interpol_int), start_time
         )
         return code, msg
