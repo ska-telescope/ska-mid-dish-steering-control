@@ -1,4 +1,120 @@
-"""Secondary Control Unit for a SKA-Mid Dish Structure Controller OPC UA server."""
+"""
+Steering Control Unit (SCU) for a SKA-Mid Dish Structure Controller OPC UA server.
+
+This module contains an OPC UA client class that simplifies connecting to a server and
+calling methods on it, reading or writing attributes.
+
+How to use SCU
+--------------
+
+Import the library:
+
+.. code-block:: python
+
+    from disq import SCU, Command
+
+Instantiate an SCU object and connect to the server. Provided here are the
+defaults which can be overwritten by specifying the named parameter:
+
+.. code-block:: python
+
+    scu = SCU(host="localhost", port=4840, endpoint="", namespace="", timeout=10.0)
+    # The scu object need to be connected to the server before it can be used
+    scu.connect_and_setup()
+    scu.take_authority("LMC")
+    # Do things
+    scu.disconnect_and_cleanup()
+
+Or altenatively SCU can be used as a context manager without calling the setup and
+teardown methods explicitly:
+
+
+.. code-block:: python
+
+    with SCU(host="localhost") as scu:
+        scu.take_authority("LMC")
+
+Finally the third and most complete option to initialise and connect an scu object
+is to use the generator method, which will:
+
+- Read the server address/port/namespace from the configuration file
+- Configure logging
+- Create (and return) the SCU object
+- Connect to the server
+- Take authority if requested
+
+
+.. code-block:: python
+
+    scu = SCU_from_config('cetc54_simulator', authority_name='LMC')
+    # do things with the scu object...
+
+All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
+`scu.nodes`. The keys are the full node names, the values are the Node objects.
+The full names of all nodes can be retrieved with:
+
+.. code-block:: python
+
+    scu.get_node_list()
+
+Every value in `scu.nodes` exposes the full OPC UA functionality for a node.
+Note: When accessing nodes directly, it is mandatory to await any calls:
+
+.. code-block:: python
+
+    node = scu.nodes['PLC_PRG']
+    node_name = (await node.read_display_name()).Text
+
+The methods that are below the PLC_PRG node's hierarchy can be accessed through
+the commands dictionary:
+
+.. code-block:: python
+
+    scu.get_command_list()
+
+When you want to call a command, please check the ICD for the parameters that the
+commands expects. Checking for the correctness of the parameters is not done here
+in sculib but in the PLC's OPC UA server. Once the parameters are in order,
+calling a command is really simple:
+
+.. code-block:: python
+
+    result = scu.commands['COMMAND_NAME'](YOUR_PARAMETERS)
+
+You can also use the Command enum, as well as helper method for converting types
+from the OPC UA server to the correct base integer type:
+
+.. code-block:: python
+
+    axis = scu.convert_enum_to_int("AxisSelectType", "Az")
+    result = scu.commands[Command.ACTIVATE.value](axis)
+
+For instance, command the PLC to slew to a new position:
+
+.. code-block:: python
+
+    az = 182.0; el = 21.8; az_v = 1.2; el_v = 2.1
+    code, msg, _ = scu.commands[Command.SLEW2ABS_AZ_EL.value](az, el, az_v, el_v)
+
+The OPC UA server also provides read-writeable and read-only variables, commonly
+called in OPC UA "attributes". An attribute's value can easily be read:
+
+.. code-block:: python
+
+    scu.attributes['Azimuth.p_Set'].value
+
+If an attribute is writable, then a simple assignment does the trick:
+
+
+.. code-block:: python
+
+    scu.attributes['Azimuth.p_Set'].value = 1.2345
+
+In case an attribute is not writeable, the OPC UA server will report an error:
+
+`*** Exception caught: User does not have permission to perform the requested operation.
+(BadUserAccessDenied)`
+"""
 
 # pylint: disable=too-many-lines, broad-exception-caught
 import asyncio
@@ -42,7 +158,6 @@ def configure_logging(default_log_level: int = logging.INFO) -> None:
 
     :param default_log_level: The default logging level to use if no configuration file
         is found. Defaults to logging.INFO.
-    :type default_log_level: int
     :raises ValueError: If an error occurs while configuring logging from the file.
     """
     disq_log_config_file = Path("disq_logging_config.yaml")
@@ -93,7 +208,6 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
     Handle and log an exception.
 
     :param e: The exception that was caught.
-    :type e: Exception
     """
     logger.exception("*** Exception caught: %s [context: %s]", e, msg)
 
@@ -104,23 +218,14 @@ def create_rw_attribute(
     """
     Create a read-write attribute for an OPC UA node.
 
-    :param node: The OPC UA node to create the attribute for.
-    :type node: asyncua.Node
-
-    :param event_loop: The asyncio event loop to use for running coroutines.
-    :type event_loop: asyncio.AbstractEventLoop
-
-    :param node_name: The name of the OPC UA node.
-    :type node_name: str
-
-    :return: An instance of a read-write attribute for the given OPC UA node.
-    :rtype: opc_ua_rw_attribute
-
     The opc_ua_rw_attribute class has the following methods:
-
     - value: A property that gets the value of the OPC UA node.
     - value.setter: A setter method that sets the value of the OPC UA node.
 
+    :param node: The OPC UA node to create the attribute for.
+    :param event_loop: The asyncio event loop to use for running coroutines.
+    :param node_name: The name of the OPC UA node.
+    :return: An instance of a read-write attribute for the given OPC UA node.
     :raises Exception: If an exception occurs during getting or setting the value.
     """
 
@@ -163,13 +268,9 @@ def create_ro_attribute(
     Create a read-only attribute for an OPC UA Node.
 
     :param node: The OPC UA Node from which to read the attribute.
-    :type node: asyncua.Node
     :param event_loop: The asyncio event loop to use.
-    :type event_loop: asyncio.AbstractEventLoop
     :param node_name: The name of the OPC UA node.
-    :type node_name: str
     :return: An object with a read-only 'value' property.
-    :rtype: opc_ua_ro_attribute
     :raises Exception: If an error occurs while getting the value from the OPC UA Node.
     """
 
@@ -200,9 +301,7 @@ class SubscriptionHandler:
     A class representing a Subscription Handler.
 
     :param subscription_queue: The queue to store subscription notifications.
-    :type subscription_queue: queue.Queue
     :param nodes: A dictionary mapping nodes to their names.
-    :type nodes: dict
     """
 
     def __init__(
@@ -215,9 +314,7 @@ class SubscriptionHandler:
         Initialize the object with a subscription queue and nodes.
 
         :param subscription_queue: A queue for subscriptions.
-        :type subscription_queue: queue.Queue
         :param nodes: A dictionary of nodes.
-        :type nodes: dict
         :param bad_shutdown_callback: will be called if a BadShutdown subscription
             status notification is received, defaults to None.
         """
@@ -287,103 +384,20 @@ class SecondaryControlUnit:
     An OPC UA client class that simplifies connecting to a server and calling
     methods on it, reading or writing attributes.
 
-    How to:
-    - Import the library:
-
-    ```
-    from disq import SCU, Command
-    ```
-    - Instantiate an SCU object and connect to the server. Provided here are the
-      defaults which can be overwritten by specifying the named parameter:
-
-    ```
-    scu = SCU(host="localhost", port=4840, endpoint="", namespace="", timeout=10.0)
-
-    # The scu object need to be connected to the server before it can be used
-    scu.connect_and_setup()
-    scu.take_authority("LMC")
-    # Do things
-    scu.disconnect_and_cleanup()
-    ```
-    - Or altenatively SCU can be used as a context manager without calling the setup and
-      teardown methods explicitly:
-
-    ```
-    with SCU(host="localhost") as scu:
-        scu.take_authority("LMC")
-    ```
-    Finally the third and most complete option to initialise and connect an scu object
-    is to use the generator method, which will:
-    - Read the server address/port/namespace from the configuration file
-    - Configure logging
-    - Create (and return) the SCU object
-    - Connect to the server
-    - Take authority if requested
-    ```
-    scu = SCU_from_config('cetc54_simulator', authority_name='LMC')
-    # do things with the scu object...
-    ```
-    - All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
-      `scu.nodes`. The keys are the full node names, the values are the Node objects.
-      The full names of all nodes can be retrieved with:
-
-    ```
-    scu.get_node_list()
-    ```
-    - Every value in `scu.nodes` exposes the full OPC UA functionality for a node.
-      Note: When accessing nodes directly, it is mandatory to await any calls:
-
-    ```
-    node = scu.nodes['PLC_PRG']
-    node_name = (await node.read_display_name()).Text
-    ```
-    - The methods that are below the PLC_PRG node's hierarchy can be accessed through
-      the commands dictionary:
-
-    ```
-    scu.get_command_list()
-    ```
-    - When you want to call a command, please check the ICD for the parameters that the
-      commands expects. Checking for the correctness of the parameters is not done here
-      in sculib but in the PLC's OPC UA server. Once the parameters are in order,
-      calling a command is really simple:
-
-    ```
-    result = scu.commands['COMMAND_NAME'](YOUR_PARAMETERS)
-    ```
-    - You can also use the Command enum, as well as helper method for converting types
-      from the OPC UA server to the correct base integer type:
-
-    ```
-    axis = scu.convert_enum_to_int("AxisSelectType", "Az")
-    result = scu.commands[Command.ACTIVATE.value](axis)
-    ```
-    - For instance, command the PLC to slew to a new position:
-
-    ```
-    az = 182.0; el = 21.8; az_v = 1.2; el_v = 2.1
-    code, msg, _ = scu.commands[Command.SLEW2ABS_AZ_EL.value](az, el, az_v, el_v)
-    ```
-    - The OPC UA server also provides read-writeable and read-only variables, commonly
-      called in OPC UA "attributes". An attribute's value can easily be read:
-
-    ```
-    scu.attributes['Azimuth.p_Set'].value
-    ```
-    - If an attribute is writable, then a simple assignment does the trick:
-
-    ```
-    scu.attributes['Azimuth.p_Set'].value = 1.2345
-    ```
-    - In case an attribute is not writeable, the OPC UA server will report an error:
-
-    ```
-    scu.attributes['Azimuth.p_Set'].value = 10
-    *** Exception caught
-    "User does not have permission to perform the requested operation."
-    (BadUserAccessDenied)
-    ```
-    """  # noqa: RST201,RST203,RST214,RST301
+    :param host: The hostname or IP address of the server. Default is 'localhost'.
+    :param port: The port number of the server. Default is 4840.
+    :param endpoint: The endpoint on the server. Default is ''.
+    :param namespace: The namespace for the server. Default is ''.
+    :param username: The username for authentication. Default is None.
+    :param password: The password for authentication. Default is None.
+    :param timeout: The timeout value for connection. Default is 10.0.
+    :param eventloop: The asyncio event loop to use. Default is None.
+    :param gui_app: Whether the instance is for a GUI application. Default is False.
+    :param use_nodes_cache: Whether to use any existing caches of node IDs.
+        Default is False.
+    :param app_name: application name for OPC UA client description.
+        Default 'DiSQ.sculib v{PACKAGE_VERSION}'
+    """
 
     # pylint: disable=too-many-arguments,too-many-locals
     def __init__(
@@ -400,32 +414,7 @@ class SecondaryControlUnit:
         use_nodes_cache: bool = False,
         app_name: str = f"DiSQ.sculib v{PACKAGE_VERSION}",
     ) -> None:
-        """
-        Initialise SCU with the provided parameters.
-
-        :param host: The hostname or IP address of the server. Default is 'localhost'.
-        :type host: str
-        :param port: The port number of the server. Default is 4840.
-        :type port: int
-        :param endpoint: The endpoint on the server. Default is ''.
-        :type endpoint: str
-        :param namespace: The namespace for the server. Default is ''.
-        :type namespace: str
-        :param username: The username for authentication. Default is None.
-        :type username: str | None
-        :param password: The password for authentication. Default is None.
-        :type password: str | None
-        :param timeout: The timeout value for connection. Default is 10.0.
-        :type timeout: float
-        :param eventloop: The asyncio event loop to use. Default is None.
-        :type eventloop: asyncio.AbstractEventLoop | None
-        :param gui_app: Whether the instance is for a GUI application. Default is False.
-        :type gui_app: bool
-        :param use_nodes_cache: Whether to use any existing caches of node IDs.
-        :type use_nodes_cache: bool
-        :param app_name: application name for OPC UA client description.
-        :type app_name: str
-        """
+        """Initialise SCU with the provided parameters."""
         logger.info("Initialising SCU")
         # Intialised variables
         self.host = host
@@ -554,7 +543,6 @@ class SecondaryControlUnit:
 
         :return: The version of the server, or None if the server version info could
             not be read successfully.
-        :rtype: str
         """
         try:
             version_node = asyncio.run_coroutine_threadsafe(
@@ -585,7 +573,6 @@ class SecondaryControlUnit:
         Generation timestamp of the PLC_PRG Node tree.
 
         :return: timestamp in 'yyyy-mm-dd hh:mm:ss' string format.
-        :rtype: str
         """
         return self._plc_prg_nodes_timestamp
 
@@ -601,10 +588,8 @@ class SecondaryControlUnit:
         Run the event loop using the specified event loop and thread started event.
 
         :param event_loop: The asyncio event loop to run.
-        :type event_loop: asyncio.AbstractEventLoop
         :param thread_started_event: The threading event signaling that the thread has
             started.
-        :type thread_started_event: threading.Event
         """
         self.event_loop = event_loop
         asyncio.set_event_loop(event_loop)
@@ -634,11 +619,8 @@ class SecondaryControlUnit:
         Set up encryption for the client with the given user credentials.
 
         :param client: The client to set up encryption for.
-        :type client: Client
         :param user: The username for the server.
-        :type user: str
         :param pw: The password for the server.
-        :type pw: str
         """
         # this is generated if it does not exist
         opcua_client_key = Path(str(resources.files(__package__) / "certs/key.pem"))
@@ -758,7 +740,6 @@ class SecondaryControlUnit:
         Disconnect a client connection.
 
         :param client: The client to disconnect. If None, disconnect self.client.
-        :type client: Client
         """
         if client is None and self.client is not None:
             client = self.client
@@ -778,7 +759,6 @@ class SecondaryControlUnit:
         Check if the SCU is connected to an OPC-UA server.
 
         :return: True if the SCU has a connection, False otherwise.
-        :rtype: bool
         """
         return self.client is not None
 
@@ -787,9 +767,7 @@ class SecondaryControlUnit:
         Take command authority.
 
         :param user: Authority user name - DscCmdAuthorityType enum.
-        :type user: str | int (ua.DscCmdAuthorityType)
         :return: The result of the command execution.
-        :rtype: tuple[ResultCode, str]
         """
         user_int = (
             self.convert_enum_to_int("DscCmdAuthorityType", user)
@@ -821,7 +799,6 @@ class SecondaryControlUnit:
         Release command authority.
 
         :return: The result of the command execution.
-        :rtype: tuple[ResultCode, str]
         """
         if self._user is not None and self._session_id is not None:
             code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
@@ -848,11 +825,8 @@ class SecondaryControlUnit:
         Convert the name (string) of the given enumeration type to an integer value.
 
         :param enum_type: the name of the enumeration type to use.
-        :type enum_type: str
         :param name: of enum to convert.
-        :type name: str
         :return: enum integer value, or None if the type does not exist.
-        :rtype: int | None
         """
         try:
             value = getattr(ua, enum_type)[name]
@@ -870,11 +844,8 @@ class SecondaryControlUnit:
         Convert the integer value of the given enumeration type to its name (string).
 
         :param enum_type: the name of the enumeration type to use.
-        :type enum_type: str
         :param value: of enum to convert.
-        :type value: int
         :return: enum name, or the original integer value if the type does not exist.
-        :rtype: str | int
         """
         try:
             return (
@@ -893,7 +864,6 @@ class SecondaryControlUnit:
 
         :return: A dictionary mapping OPC-UA enum type names to their corresponding
             value. The value being an enumerated type.
-        :rtype: dict
         """
         return self._opcua_enum_types
 
@@ -964,15 +934,11 @@ class SecondaryControlUnit:
         Create a command function to execute a method on a specified Node.
 
         :param node: The Node on which the method will be executed.
-        :type node: asyncua.Node
         :param event_loop: The asyncio event loop to run the coroutine on.
-        :type event_loop: asyncio.AbstractEventLoop
         :param node_name: The full name of the Node.
-        :type node_name: str
         :param need_authority: If the command needs user authority to be executed.
             Defaults to True.
         :return: A function that can be used to execute a method on the Node.
-        :rtype: function
         """
         try:
             node_parent = asyncio.run_coroutine_threadsafe(
@@ -1010,10 +976,8 @@ class SecondaryControlUnit:
             Execute function with arguments and return tuple with return code/message.
 
             :param args: Optional positional arguments to pass to the function.
-            :type args: tuple
             :return: A tuple containing the return code (int), return message (str),
                 and a list of other returned values (Any), if any, otherwise None.
-            :rtype: tuple[int, str, list[Any] | None]
 
             Any exception raised during the execution of the function will be handled
             and a tuple with return code and exception message returned.
@@ -1089,9 +1053,7 @@ class SecondaryControlUnit:
         Validate a command's result code and return a ResultCode enum and string value.
 
         :param result_code: Raw command result code integer
-        :type result_code: int
         :return: A tuple containing the ResultCode enum and message.
-        :rtype: tuple[ResultCode, str]
         """
         # Check for valid result code
         result_enum = (
@@ -1115,10 +1077,8 @@ class SecondaryControlUnit:
         Load JSON file.
 
         :param file_path: of JSON file to load.
-        :type file_path: Path
         :return: decoded JSON file contents as nested dictionary,
             or empty dict if the file does not exists.
-        :rtype: dict
         """
         if file_path.exists():
             with open(file_path, "r", encoding="UTF-8") as file:
@@ -1139,9 +1099,7 @@ class SecondaryControlUnit:
         as key.
 
         :param file_path: of JSON file to load.
-        :type file_path: Path
         :param nodes: dictionary of Nodes to cache.
-        :type nodes: NodeDict
         """
         node_ids = {}
         for key, tup in nodes.items():
@@ -1282,9 +1240,7 @@ class SecondaryControlUnit:
         Generate dicts for nodes, attributes, and commands from a cache.
 
         :param top_level_node_name: Name of the top-level node.
-        :type top_level_node_name: str
         :return: A tuple containing dictionaries for nodes, attributes and commands.
-        :rtype: tuple
         """
         logger.info(
             "Generating dicts of '%s' node's tree from existing cache in %s",
@@ -1331,11 +1287,8 @@ class SecondaryControlUnit:
         The dictionaries contain mappings of keys to nodes, attributes, and commands.
 
         :param top_level_node: The top-level node for which to generate dictionaries.
-        :type top_level_node: Node
         :param top_level_node_name: Name of the top-level node.
-        :type top_level_node_name: str
         :return: A tuple containing dictionaries for nodes, attributes, and commands.
-        :rtype: tuple
         """
         logger.info(
             "Generating dicts of '%s' node's tree from server. It may take a while...",
@@ -1359,15 +1312,11 @@ class SecondaryControlUnit:
         Generate the full name of a node by combining its name with its parent names.
 
         :param node: The node for which the full name is generated.
-        :type node: asyncua.Node
         :param parent_names: A list of parent node names. Defaults to None if the node
             has no parent.
-        :type parent_names: list[str] | None
         :param node_name_separator: The separator used to join the node and parent
             names. Default is '.'.
-        :type node_name_separator: str
         :return: A tuple containing the full node name and a list of ancestor names.
-        :rtype: tuple
         :raises: No specific exceptions raised.
         """
         try:
@@ -1408,13 +1357,9 @@ class SecondaryControlUnit:
         Retrieve sub-nodes, attributes, and commands of a given node.
 
         :param node: The node to retrieve sub-nodes from.
-        :type node: asyncua.Node
         :param node_name_separator: Separator for node names (default is '.').
-        :type node_name_separator: str
         :param parent_names: List of parent node names (default is None).
-        :type parent_names: list[str] | None
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
-        :rtype: tuple
         """
         nodes: NodeDict = {}
         attributes: AttrDict = {}
@@ -1473,7 +1418,6 @@ class SecondaryControlUnit:
         Get a list of node names.
 
         :return: A list of node names.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.nodes)
 
@@ -1482,7 +1426,6 @@ class SecondaryControlUnit:
         Get the list of commands associated with this object.
 
         :return: A list of strings representing the commands.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.commands)
 
@@ -1491,7 +1434,6 @@ class SecondaryControlUnit:
         Get the list of attributes.
 
         :return: A list of attribute names.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.attributes)
 
@@ -1500,7 +1442,6 @@ class SecondaryControlUnit:
         Get a list of parameter nodes.
 
         :return: A list of parameter nodes.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.parameter_nodes)
 
@@ -1509,7 +1450,6 @@ class SecondaryControlUnit:
         Get a list of parameter commands.
 
         :return: A list of parameter commands.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.parameter_commands)
 
@@ -1518,7 +1458,6 @@ class SecondaryControlUnit:
         Return a list of parameter attributes.
 
         :return: A list of parameter attribute names.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.parameter_attributes)
 
@@ -1527,7 +1466,6 @@ class SecondaryControlUnit:
         Get the list of server nodes.
 
         :return: A list of server node names.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.server_nodes)
 
@@ -1536,7 +1474,6 @@ class SecondaryControlUnit:
         Get the list of server commands.
 
         :return: A list of server command strings.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.server_commands)
 
@@ -1545,7 +1482,6 @@ class SecondaryControlUnit:
         Get a list of server attributes.
 
         :return: A list of server attributes.
-        :rtype: list[str]
         """
         return self.__get_node_list(self.server_attributes)
 
@@ -1554,9 +1490,7 @@ class SecondaryControlUnit:
         Get a list of node keys from a dictionary of nodes.
 
         :param nodes: A dictionary of nodes where keys are node identifiers.
-        :type nodes: dict
         :return: A list of node keys.
-        :rtype: list
         """
         logger.debug("\n".join(nodes.keys()))
         return list(nodes.keys())
@@ -1612,13 +1546,9 @@ class SecondaryControlUnit:
         Check if the fields of an enumeration are out of order.
 
         :param index: The expected index of the field.
-        :type index: int
         :param field: The enumeration field to be checked.
-        :type field: asyncua.ua.uaprotocol_auto.EnumField
         :param enum_node: The NodeId of the enumeration.
-        :type enum_node: asyncua.ua.uatypes.NodeId
         :return: A string indicating the error if fields are out of order.
-        :rtype: str
         """
         enum_name = (
             asyncio.run_coroutine_threadsafe(
@@ -1674,9 +1604,7 @@ class SecondaryControlUnit:
         Get the descriptions of a list of nodes.
 
         :param node_list: A list of node names.
-        :type node_list: list[str]
         :return: A list of tuples containing the node names and their descriptions.
-        :rtype: tuple(str, str|None)
         """
 
         async def get_descriptions() -> list[str]:
@@ -1706,14 +1634,10 @@ class SecondaryControlUnit:
 
         :param attributes: A single OPC-UA attribute or a list of attributes to
             subscribe to.
-        :type attributes: str or list[str]
         :param period: The period in milliseconds for checking attribute updates.
-        :type period: int
         :param data_queue: A queue to store the subscribed attribute data. If None, uses
             the default subscription queue.
-        :type data_queue: queue.Queue
         :return: unique identifier for the subscription and lists of missing/bad nodes.
-        :rtype: tuple[int, list, list]
         :param bad_shutdown_callback: will be called if a BadShutdown subscription
             status notification is received, defaults to None.
         """
@@ -1771,7 +1695,6 @@ class SecondaryControlUnit:
         Unsubscribe a user from a subscription.
 
         :param uid: The ID of the user to unsubscribe.
-        :type uid: int
         """
         subscription = self.subscriptions.pop(uid)
         _ = asyncio.run_coroutine_threadsafe(
@@ -1792,7 +1715,6 @@ class SecondaryControlUnit:
 
         :return: A list of dictionaries containing the values from the subscription
             queue.
-        :rtype: list[dict]
         """
         values = []
         while not self.subscription_queue.empty():
@@ -1838,7 +1760,6 @@ class SecondaryControlUnit:
             effect when absolute_times is False. Default 10.1
         :param result_callback: Callback with result code and message when task finishes
         :return: The result of the command execution.
-        :rtype: tuple[ResultCode, str]
         """
         if self._session_id is None:
             msg = "Need to take command authority before loading a track table."
@@ -2090,7 +2011,6 @@ class SecondaryControlUnit:
         Reset the DMC  for a specific axis.
 
         :param axis: The axis to be reset (AxisSelectType).
-        :type axis: int
         :return: The result of resetting the DMC for the specified axis.
         """
         logger.info("reset dmc")
@@ -2101,7 +2021,6 @@ class SecondaryControlUnit:
         Activate the DMC for a specific axis.
 
         :param axis: The axis to activate (AxisSelectType).
-        :type axis: int
         :return: The result of activating the DMC for the specified axis.
         """
         logger.info("activate dmc")
@@ -2112,7 +2031,6 @@ class SecondaryControlUnit:
         Deactivate a specific axis of the DMC controller.
 
         :param axis: The axis to deactivate (AxisSelectType).
-        :type axis: int
         :return: The result of desactivating the DMC for the specified axis.
         """
         logger.info("deactivate dmc")
@@ -2124,7 +2042,6 @@ class SecondaryControlUnit:
 
         :param position: The band to move to, either as a string representation or a
             numerical value.
-        :type position: str or int
         :return: The result of moving to the specified band.
         :raises KeyError: If the specified band is not found in the bands dictionary.
         """
@@ -2145,13 +2062,9 @@ class SecondaryControlUnit:
         Calculate and move the telescope to an absolute azimuth and elevation position.
 
         :param az_angle: The absolute azimuth angle in degrees.
-        :type az_angle: float
         :param el_angle: The absolute elevation angle in degrees.
-        :type el_angle: float
         :param az_velocity: The azimuth velocity in degrees per second.
-        :type az_velocity: float
         :param el_velocity: The elevation velocity in degrees per second.
-        :type el_velocity: float
         """
         logger.info(
             f"abs az: {az_angle:.4f} el: {el_angle:.4f}, "
@@ -2239,9 +2152,7 @@ class SecondaryControlUnit:
         Move to the absolute azimuth angle with given velocity.
 
         :param az_angle: The azimuth angle value.
-        :type az_angle: float
         :param az_vel: The azimuth velocity.
-        :type az_vel: float
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
@@ -2254,9 +2165,7 @@ class SecondaryControlUnit:
         Move to the absolute elevation angle with given velocity.
 
         :param el_angle: The absolute elevation angle.
-        :type el_angle: float
         :param el_vel: The elevation velocity.
-        :type el_vel: float
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
@@ -2269,9 +2178,7 @@ class SecondaryControlUnit:
         Calculate the absolute feed indexer value.
 
         :param fi_angle: The angle value for the feed indexer.
-        :type fi_angle: float
         :param fi_vel: The velocity value for the feed indexer.
-        :type fi_vel: float
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
@@ -2284,9 +2191,7 @@ class SecondaryControlUnit:
         Load static azimuth and elevation offsets for tracking.
 
         :param az_offset: The azimuth offset value.
-        :type az_offset: float
         :param el_offset: The elevation offset value.
-        :type el_offset: float
         :return: The result of loading the static offsets.
         """
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
@@ -2310,8 +2215,7 @@ def SCU(  # noqa: N802
     This method creates an SCU object with the provided parameters, conneects it to the
     OPC-UA server and sets it up, ready to be used with the attributes and commands.
 
-    :return: an instance of the _SCU class.
-    :rtype: _SCU
+    :return: an instance of the SteeringControlUnit class.
     """
     scu = SecondaryControlUnit(
         host=host,
@@ -2344,9 +2248,8 @@ def SCU_from_config(  # noqa: N802
     The method also configures logging based on the log configuration file:
     "disq_logging_config.yaml".
 
-    :return: an initialised and connected instance of the _SCU class or None if the
-        connection to the OPC-UA server failed.
-    :rtype: _SCU | None
+    :return: an initialised and connected instance of the SteeringControlUnit class or
+        None if the connection to the OPC-UA server failed.
     """
     configure_logging()
     sculib_args: dict = configuration.get_config_sculib_args(
