@@ -1822,12 +1822,12 @@ class SecondaryControlUnit:
         logger.info("acknowledge dmc")
         return self.commands[Command.INTERLOCK_ACK.value]()
 
-    def reset_dmc(self, axis: int = None) -> CmdReturn:
+    def reset_dmc(self, axis: int | None = None) -> CmdReturn:
         """
         Reset the DMC (Device Motion Controller) for a specific axis.
 
-        :param axis: The axis for which the DMC should be reset. Valid values are 0 for
-            AZ (Azimuth), 1 for EL (Elevation), 2 for FI (Focus), and 3 for both AZ and
+        :param axis: The axis for which the DMC should be reset. Valid values are 1 for
+            AZ (Azimuth), 2 for EL (Elevation), 3 for FI (Focus), and 4 for both AZ and
             EL. Defaults to None.
         :type axis: int
         :return: The result of resetting the DMC for the specified axis.
@@ -1837,16 +1837,16 @@ class SecondaryControlUnit:
         if axis is None:
             logger.error(
                 "reset_dmc requires an axis as parameter! Try one "
-                "of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
+                "of these values: Az=1, El=2, Fi=3, AzEl=4."
             )
             raise ValueError
         return self.commands[Command.RESET.value](ua.UInt16(axis))
 
-    def activate_dmc(self, axis: int = None) -> CmdReturn:
+    def activate_dmc(self, axis: int | None = None) -> CmdReturn:
         """
         Activate the DMC (Digital Motion Controller) for a specific axis.
 
-        :param axis: The axis for which to activate the DMC (0=AZ, 1=EL, 2=FI, 3=AZ&EL).
+        :param axis: The axis for which to activate the DMC (Az=1, El=2, Fi=3, AzEl=4).
         :type axis: int
         :return: The result of activating the DMC for the specified axis.
         :raises ValueError: If the axis parameter is None.
@@ -1855,16 +1855,16 @@ class SecondaryControlUnit:
         if axis is None:
             logger.error(
                 "activate_dmc requires an axis as parameter! "
-                "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
+                "Try one of these values: Az=1, El=2, Fi=3, AzEl=4"
             )
             raise ValueError
         return self.commands[Command.ACTIVATE.value](ua.UInt16(axis))
 
-    def deactivate_dmc(self, axis: int = None) -> CmdReturn:
+    def deactivate_dmc(self, axis: int | None = None) -> CmdReturn:
         """
         Deactivate a specific axis of the DMC controller.
 
-        :param axis: The axis to deactivate (0=AZ, 1=EL, 2=FI, 3=AZ&EL).
+        :param axis: The axis to deactivate (Az=1, El=2, Fi=3, AzEl=4).
         :type axis: int, optional
         :raises ValueError: If the axis parameter is None.
         """
@@ -1872,7 +1872,7 @@ class SecondaryControlUnit:
         if axis is None:
             logger.error(
                 "deactivate_dmc requires an axis as parameter! "
-                "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
+                "Try one of these values: Az=1, El=2, Fi=3, AzEl=4"
             )
             raise ValueError
         return self.commands[Command.DEACTIVATE.value](ua.UInt16(axis))
@@ -1921,48 +1921,59 @@ class SecondaryControlUnit:
         )
 
     # commands to ACU
+    def stow(self) -> CmdReturn:
+        """
+        Stow the dish.
+
+        :return: The result of the stow command.
+        """
+        logger.info("stow")
+        return self.commands[Command.STOW.value](True)
+
+    def unstow(self) -> CmdReturn:
+        """
+        Unstow the dish.
+
+        :return: The result of the unstow command.
+        """
+        logger.info("unstow")
+        return self.commands[Command.STOW.value](False)
+
     def activate_az(self) -> CmdReturn:
         """
-        Activate the azimuth functionality.
-
-        This method activates azimuth by calling the activate_dmc method with a
-        parameter of 0.
+        Activate the azimuth axis.
 
         :return: The result of activating the azimuth functionality.
         """
         logger.info("activate azimuth")
-        return self.activate_dmc(0)
+        return self.activate_dmc(self.convert_enum_to_int("AxisSelectType", "Az"))
 
     def deactivate_az(self) -> CmdReturn:
         """
-        Deactivate azimuth functionality.
+        Deactivate the azimuth axis.
 
         :return: The result of deactivating azimuth.
-        :raises Exception: May raise exceptions if there are errors during the
-            deactivation process.
         """
         logger.info("deactivate azimuth")
-        return self.deactivate_dmc(0)
+        return self.deactivate_dmc(self.convert_enum_to_int("AxisSelectType", "Az"))
 
     def activate_el(self) -> CmdReturn:
         """
-        Activate the elevation.
+        Activate the elevation axis.
 
         :return: The result of activating elevation.
         """
         logger.info("activate elevation")
-        return self.activate_dmc(1)
+        return self.activate_dmc(self.convert_enum_to_int("AxisSelectType", "El"))
 
     def deactivate_el(self) -> CmdReturn:
         """
-        Deactivate elevation.
-
-        This method deactivates elevation.
+        Deactivate the elevation axis.
 
         :return: The result of deactivating elevation.
         """
         logger.info("deactivate elevation")
-        return self.deactivate_dmc(1)
+        return self.deactivate_dmc(self.convert_enum_to_int("AxisSelectType", "El"))
 
     def activate_fi(self) -> CmdReturn:
         """
@@ -1971,7 +1982,7 @@ class SecondaryControlUnit:
         :return: The result of activating the feed indexer.
         """
         logger.info("activate feed indexer")
-        return self.activate_dmc(2)
+        return self.activate_dmc(self.convert_enum_to_int("AxisSelectType", "Fi"))
 
     def deactivate_fi(self) -> CmdReturn:
         """
@@ -1980,26 +1991,26 @@ class SecondaryControlUnit:
         :return: The result of deactivating the feed indexer.
         """
         logger.info("deactivate feed indexer")
-        return self.deactivate_dmc(2)
+        return self.deactivate_dmc(self.convert_enum_to_int("AxisSelectType", "Fi"))
 
     def abs_azimuth(self, az_angle: float, az_vel: float) -> CmdReturn:
         """
-        Calculate the absolute azimuth based on azimuth angle and azimuth velocity.
+        Move to the absolute azimuth angle with given velocity.
 
         :param az_angle: The azimuth angle value.
         :type az_angle: float
-        :param az_vel: The azimuth velocity value.
+        :param az_vel: The azimuth velocity.
         :type az_vel: float
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
-            ua.UInt16(0), az_angle, az_vel
+            self.convert_enum_to_int("AxisSelectType", "Az"), az_angle, az_vel
         )
 
     def abs_elevation(self, el_angle: float, el_vel: float) -> CmdReturn:
         """
-        Calculate the absolute elevation angle and velocity.
+        Move to the absolute elevation angle with given velocity.
 
         :param el_angle: The absolute elevation angle.
         :type el_angle: float
@@ -2009,7 +2020,7 @@ class SecondaryControlUnit:
         """
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
-            ua.UInt16(1), el_angle, el_vel
+            self.convert_enum_to_int("AxisSelectType", "El"), el_angle, el_vel
         )
 
     def abs_feed_indexer(self, fi_angle: float, fi_vel: float) -> CmdReturn:
@@ -2024,7 +2035,7 @@ class SecondaryControlUnit:
         """
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
-            ua.UInt16(2), fi_angle, fi_vel
+            self.convert_enum_to_int("AxisSelectType", "Fi"), fi_angle, fi_vel
         )
 
     def load_static_offset(self, az_offset: float, el_offset: float) -> CmdReturn:
