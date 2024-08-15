@@ -469,7 +469,6 @@ class SecondaryControlUnit:
         self.server_nodes: NodeDict
         self.server_attributes: AttrDict
         self.server_commands: CmdDict
-        self.track_load_node: Node
         self.track_table: TrackTable | None = None
         self.stop_track_table_schedule_task_event: threading.Event | None = None
         self.track_table_scheduled_task: Future | None = None
@@ -1281,16 +1280,6 @@ class SecondaryControlUnit:
         for node_name, tup in cache_dict.items():
             node_id, node_class = tup
             node = self.client.get_node(node_id)
-            # TrackLoadTable is scheduled in its own async method. All calls to
-            # TrackLoadTable should go through said method so do not add it to commands
-            # dict.
-            if (
-                node_id == f"ns={self.ns_idx};s=Application.PLC_PRG."
-                f"{Command.TRACK_LOAD_TABLE.value}"
-            ):
-                self.track_load_node = node
-                continue
-
             nodes[node_name] = (node, node_class)
             if node_class == 2:
                 # An attribute. Add it to the attributes dict.
@@ -1974,19 +1963,14 @@ class SecondaryControlUnit:
             azi.extend(padding)
             ele.extend(padding)
 
-        load_call = self.track_load_node.call_method
-        load_args = [
-            self._session_id,
-            ua.UInt16(mode),  # 0 append, 1 new, TODO 2 reset
-            ua.UInt16(num),
-            tai,
-            azi,
-            ele,
-        ]
         if self._session_id is None:
             return ResultCode.NOT_EXECUTED, "Lost authority while loading track table."
-        result_code_int = await load_call(self.track_load_node, *load_args)
-        result_code, result_msg = self._validate_command_result_code(result_code_int)
+
+        # Call TrackLoadTable command and validate result code
+        load_args = [self._session_id, ua.UInt16(mode), ua.UInt16(num), tai, azi, ele]
+        track_load_node = self.nodes[Command.TRACK_LOAD_TABLE.value][0]
+        result_code = await track_load_node.call_method(track_load_node, *load_args)
+        result_code, result_msg = self._validate_command_result_code(result_code)
         if result_code not in (ResultCode.COMMAND_DONE, ResultCode.COMMAND_ACTIVATED):
             # Failed to send points so restore index.
             self.track_table.sent_index -= num
