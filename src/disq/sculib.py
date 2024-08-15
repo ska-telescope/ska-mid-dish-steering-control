@@ -2212,7 +2212,7 @@ def SCU(  # noqa: N802
 ) -> SecondaryControlUnit:
     """SCU object generator method.
 
-    This method creates an SCU object with the provided parameters, conneects it to the
+    This method creates an SCU object with the provided parameters, connects it to the
     OPC-UA server and sets it up, ready to be used with the attributes and commands.
 
     :return: an instance of the SteeringControlUnit class.
@@ -2242,7 +2242,7 @@ def SCU_from_config(  # noqa: N802
     """SCU object generator method.
 
     This method creates an SCU object based on OPC-UA server_name connection details
-    found in the ini_file configuration file. It then conneects the SCU object to the
+    found in the ini_file configuration file. It then connects the SCU object to the
     OPC-UA server and sets it up, ready to be used with the attributes and commands.
 
     The method also configures logging based on the log configuration file:
