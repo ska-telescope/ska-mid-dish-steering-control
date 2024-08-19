@@ -942,6 +942,7 @@ class SecondaryControlUnit:
         node: Node,
         event_loop: asyncio.AbstractEventLoop,
         node_name: str,
+        need_authority: bool = True,
     ) -> Callable:
         """
         Create a command function to execute a method on a specified Node.
@@ -952,6 +953,8 @@ class SecondaryControlUnit:
         :type event_loop: asyncio.AbstractEventLoop
         :param node_name: The full name of the Node.
         :type node_name: str
+        :param need_authority: If the command needs user authority to be executed.
+            Defaults to True.
         :return: A function that can be used to execute a method on the Node.
         :rtype: function
         """
@@ -999,12 +1002,14 @@ class SecondaryControlUnit:
             """
             result_code = None
             result_output = None
-            try:
-                cmd_args = (
-                    [self._session_id, *args]
-                    if self._session_id is not None
-                    else [*args]
+            if need_authority and self._session_id is None:
+                return (
+                    ResultCode.NOT_EXECUTED,
+                    "DiSQ-SCU has no command authority to execute requested command",
+                    result_output,
                 )
+            try:
+                cmd_args = [self._session_id, *args] if need_authority else [*args]
                 logger.debug(
                     "Calling command node '%s' with args list: %s",
                     node_id,
@@ -1267,7 +1272,10 @@ class SecondaryControlUnit:
             elif node_class == 4:
                 # A command. Add it to the commands dict.
                 commands[node_name] = self._create_command_function(
-                    node, self.event_loop, node_name
+                    node,
+                    self.event_loop,
+                    node_name,
+                    node_name != Command.TAKE_AUTH.value,
                 )
         return (
             nodes,
@@ -1422,7 +1430,7 @@ class SecondaryControlUnit:
         elif node_class == 4:
             # A command. Add it to the commands dict.
             commands[node_name] = self._create_command_function(
-                node, self.event_loop, node_name
+                node, self.event_loop, node_name, node_name != Command.TAKE_AUTH.value
             )
         return nodes, attributes, commands
 
