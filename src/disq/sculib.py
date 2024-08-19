@@ -1822,59 +1822,37 @@ class SecondaryControlUnit:
         logger.info("acknowledge dmc")
         return self.commands[Command.INTERLOCK_ACK.value]()
 
-    def reset_dmc(self, axis: int | None = None) -> CmdReturn:
+    def reset_dmc(self, axis: int) -> CmdReturn:
         """
-        Reset the DMC (Device Motion Controller) for a specific axis.
+        Reset the DMC  for a specific axis.
 
-        :param axis: The axis for which the DMC should be reset. Valid values are 1 for
-            AZ (Azimuth), 2 for EL (Elevation), 3 for FI (Focus), and 4 for both AZ and
-            EL. Defaults to None.
+        :param axis: The axis to be reset (AxisSelectType).
         :type axis: int
         :return: The result of resetting the DMC for the specified axis.
-        :raises ValueError: If the axis parameter is not provided.
         """
         logger.info("reset dmc")
-        if axis is None:
-            logger.error(
-                "reset_dmc requires an axis as parameter! Try one "
-                "of these values: Az=1, El=2, Fi=3, AzEl=4."
-            )
-            raise ValueError
         return self.commands[Command.RESET.value](ua.UInt16(axis))
 
-    def activate_dmc(self, axis: int | None = None) -> CmdReturn:
+    def activate_dmc(self, axis: int) -> CmdReturn:
         """
-        Activate the DMC (Digital Motion Controller) for a specific axis.
+        Activate the DMC for a specific axis.
 
-        :param axis: The axis for which to activate the DMC (Az=1, El=2, Fi=3, AzEl=4).
+        :param axis: The axis to activate (AxisSelectType).
         :type axis: int
         :return: The result of activating the DMC for the specified axis.
-        :raises ValueError: If the axis parameter is None.
         """
         logger.info("activate dmc")
-        if axis is None:
-            logger.error(
-                "activate_dmc requires an axis as parameter! "
-                "Try one of these values: Az=1, El=2, Fi=3, AzEl=4"
-            )
-            raise ValueError
         return self.commands[Command.ACTIVATE.value](ua.UInt16(axis))
 
-    def deactivate_dmc(self, axis: int | None = None) -> CmdReturn:
+    def deactivate_dmc(self, axis: int) -> CmdReturn:
         """
         Deactivate a specific axis of the DMC controller.
 
-        :param axis: The axis to deactivate (Az=1, El=2, Fi=3, AzEl=4).
-        :type axis: int, optional
-        :raises ValueError: If the axis parameter is None.
+        :param axis: The axis to deactivate (AxisSelectType).
+        :type axis: int
+        :return: The result of desactivating the DMC for the specified axis.
         """
         logger.info("deactivate dmc")
-        if axis is None:
-            logger.error(
-                "deactivate_dmc requires an axis as parameter! "
-                "Try one of these values: Az=1, El=2, Fi=3, AzEl=4"
-            )
-            raise ValueError
         return self.commands[Command.DEACTIVATE.value](ua.UInt16(axis))
 
     def move_to_band(self, position: str | int) -> CmdReturn:
@@ -2223,8 +2201,8 @@ class SecondaryControlUnit:
 def SCU(  # noqa: N802
     host: str = "127.0.0.1",
     port: int = 4840,
-    endpoint: str = "/OPCUA/SimpleServer",
-    namespace: str = "CETC54",
+    endpoint: str = "",
+    namespace: str = "",
     username: str | None = None,
     password: str | None = None,
     timeout: float = 10.0,
