@@ -468,6 +468,7 @@ class SecondaryControlUnit:
         self.server_nodes: NodeDict
         self.server_attributes: AttrDict
         self.server_commands: CmdDict
+        self._opcua_enum_types: dict[str, Type[Enum]] = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -504,6 +505,7 @@ class SecondaryControlUnit:
                     self.server_version,
                 )
         self.populate_node_dicts(self._gui_app, self._use_nodes_cache)
+        self._validate_enum_types()  # Ensures enum types are defined
         logger.info("Successfully connected to server and initialised SCU client")
 
     def __enter__(self) -> "SecondaryControlUnit":
@@ -879,7 +881,7 @@ class SecondaryControlUnit:
             logger.error("%s is not a valid '%s' enum value!", value, enum_type)
             return value
 
-    @cached_property
+    @property
     def opcua_enum_types(self) -> dict[str, Type[Enum]]:
         """
         Retrieve a dictionary of OPC-UA enum types.
@@ -888,7 +890,17 @@ class SecondaryControlUnit:
             value. The value being an enumerated type.
         :rtype: dict
         """
-        result = {}
+        return self._opcua_enum_types
+
+    def _validate_enum_types(self) -> None:
+        """
+        Validate the DSC's OPC-UA enum types.
+
+        Check if the expected OPC-UA enum types are defined after connecting to the
+        server, and if not, try to manually retrieve them by their node ID and set the
+        corresponding ua attributes. Add all found enum types and their values to the
+        'opcua_enum_types' dictionary property.
+        """
         missing_types = []
         expected_types = [
             "AxisSelectType",
@@ -906,15 +918,15 @@ class SecondaryControlUnit:
         ]
         for type_name in expected_types:
             try:
-                result.update({type_name: getattr(ua, type_name)})
+                self._opcua_enum_types.update({type_name: getattr(ua, type_name)})
             except AttributeError:
                 try:
                     enum_node = self.client.get_node(
                         f"ns={self.ns_idx};s=@{type_name}.EnumValues"
                     )
-                    enum_dict = self._create_enum_from_node(type_name, enum_node)
-                    result.update({type_name: enum_dict})
-                    setattr(ua, type_name, enum_dict)
+                    new_enum = self._create_enum_from_node(type_name, enum_node)
+                    self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
+                    setattr(ua, type_name, new_enum)
                 except (RuntimeError, ValueError):
                     missing_types.append(type_name)
         if missing_types:
@@ -923,7 +935,6 @@ class SecondaryControlUnit:
                 "as expected: %s",
                 str(missing_types),
             )
-        return result
 
     def _create_enum_from_node(self, name: str, node: Node) -> Enum:
         enum_values = asyncio.run_coroutine_threadsafe(
