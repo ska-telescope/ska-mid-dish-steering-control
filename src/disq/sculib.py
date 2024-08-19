@@ -377,9 +377,9 @@ CmdDict = dict[str, Callable[..., CmdReturn]]
 
 
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
-class SecondaryControlUnit:
+class SteeringControlUnit:
     """
-    Secondary Control Unit for a SKA-Mid Dish Structure Controller OPC UA server.
+    Steering Control Unit for a SKA-Mid Dish Structure Controller OPC UA server.
 
     An OPC UA client class that simplifies connecting to a server and calling
     methods on it, reading or writing attributes.
@@ -502,7 +502,7 @@ class SecondaryControlUnit:
         self._validate_enum_types()  # Ensures enum types are defined
         logger.info("Successfully connected to server and initialised SCU client")
 
-    def __enter__(self) -> "SecondaryControlUnit":
+    def __enter__(self) -> "SteeringControlUnit":
         """Connect to the server and setup the SCU client."""
         self.connect_and_setup()
         return self
@@ -2209,7 +2209,7 @@ def SCU(  # noqa: N802
     timeout: float = 10.0,
     use_nodes_cache: bool = False,
     authority_name: str | None = None,
-) -> SecondaryControlUnit:
+) -> SteeringControlUnit:
     """SCU object generator method.
 
     This method creates an SCU object with the provided parameters, connects it to the
@@ -2217,7 +2217,7 @@ def SCU(  # noqa: N802
 
     :return: an instance of the SteeringControlUnit class.
     """
-    scu = SecondaryControlUnit(
+    scu = SteeringControlUnit(
         host=host,
         port=port,
         endpoint=endpoint,
@@ -2238,7 +2238,7 @@ def SCU_from_config(  # noqa: N802
     ini_file: str = "disq.ini",
     use_nodes_cache: bool = True,
     authority_name: str | None = None,
-) -> SecondaryControlUnit | None:
+) -> SteeringControlUnit | None:
     """SCU object generator method.
 
     This method creates an SCU object based on OPC-UA server_name connection details
