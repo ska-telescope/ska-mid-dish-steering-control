@@ -1896,7 +1896,11 @@ class SecondaryControlUnit:
         self.stop_track_table_schedule_task_event = stop_scheduling
         if not first_load.wait(3):
             stop_scheduling.set()
-            msg = "Timed out while attempting to start loading the track table."
+            table_info = ""
+            if self.track_table:
+                table_info = " " + self.track_table.get_details_string()
+
+            msg = f"Timed out while loading first batch of track table{table_info}."
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
 
@@ -1929,9 +1933,10 @@ class SecondaryControlUnit:
                 or result_code == ResultCode.UNKNOWN
             ):
                 logger.error(
-                    "Failed to load all track points to PLC (%s). %s remaining.",
+                    "Failed to load all points to PLC (%s). %s remaining from %s.",
                     result_code,
                     self.track_table.remaining_points(),
+                    self.track_table.get_details_string(),
                 )
                 break
 
@@ -1941,15 +1946,19 @@ class SecondaryControlUnit:
                 # Allow time for the loaded points to be consumed. Minimum time between
                 # points is 50ms, at that rate 1000 points would take 50 seconds. Check
                 # more often than this to ensure PLC does not run out of points.
+                sleep_length = 45
                 if result_callback:
                     result_callback(
                         result_code,
-                        "PLC track table full, waiting for loaded points to be "
-                        "consumed...",
+                        f"PLC track table full, waiting {sleep_length} seconds for "
+                        "loaded points to be consumed...",
                     )
-                await asyncio.sleep(45)
+                await asyncio.sleep(sleep_length)
 
             if result_code == ResultCode.ENTIRE_TRACK_TABLE_LOADED:
+                if result_callback:
+                    result_callback(result_code, result_msg)
+
                 try:
                     table_kwargs = self.track_table_queue.get(block=False)
                 except queue.Empty:
@@ -1957,9 +1966,6 @@ class SecondaryControlUnit:
                         "Finished loading all queued track table points to the PLC."
                     )
                     break
-
-                if result_callback:
-                    result_callback(result_code, result_msg)
 
                 self.track_table = table_kwargs["track_table"]
                 result_callback = table_kwargs["result_callback"]
@@ -1976,7 +1982,9 @@ class SecondaryControlUnit:
         if num == 0:
             return (
                 ResultCode.ENTIRE_TRACK_TABLE_LOADED,
-                "Finished loading a set of track table points to the PLC.",
+                f"Finished loading track table {self.track_table.get_details_string} "
+                f"to the PLC. {self.track_table.sent_index} points have been sent in "
+                f"{self.track_table.num_loaded_batches} batches.",
             )
 
         # The TrackLoadTable node accepts arrays of length 1000 only.
@@ -1989,7 +1997,8 @@ class SecondaryControlUnit:
         if self._session_id is None:
             return (
                 ResultCode.NOT_EXECUTED,
-                "Lost authority while loading track table.",
+                "Lost authority while loading track table "
+                f"{self.track_table.get_details_string}.",
             )
 
         # Call TrackLoadTable command and validate result code
@@ -2010,6 +2019,9 @@ class SecondaryControlUnit:
         ):
             # Failed to send points so restore index.
             self.track_table.sent_index -= num
+        else:
+            self.track_table.num_loaded_batches += 1
+
         return result_code, result_msg
 
     def start_tracking(
