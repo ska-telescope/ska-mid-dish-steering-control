@@ -469,9 +469,10 @@ class SecondaryControlUnit:
         self.server_nodes: NodeDict
         self.server_attributes: AttrDict
         self.server_commands: CmdDict
-        self.track_table: TrackTable | None = None
+        self.track_table_queue: queue.Queue | None = None
         self.stop_track_table_schedule_task_event: threading.Event | None = None
         self.track_table_scheduled_task: Future | None = None
+        self.track_table: TrackTable | None = None
 
     def connect_and_setup(self) -> None:
         """
@@ -1824,6 +1825,7 @@ class SecondaryControlUnit:
             msg = "Need to take command authority before loading a track table."
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
+
         mode_int = (
             self.convert_enum_to_int("LoadModeType", mode)
             if isinstance(mode, str)
@@ -1837,53 +1839,58 @@ class SecondaryControlUnit:
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
 
-        if mode_int == 1:  # New track table
-            if self.stop_track_table_schedule_task_event is not None:
-                self.stop_track_table_schedule_task_event.set()
-
-            self.track_table = None
-            self.track_table_scheduled_task = None
-
-        if self.track_table is None:
-            table_args: list[Any] = [absolute_times]
-            if not absolute_times:
-                table_args.append(additional_offset)
-                table_args.append(
-                    self.attributes[
-                        "Time_cds.Status.TAIoffset"
-                    ].value  # type: ignore[attr-defined]
-                )
-            self.track_table = TrackTable(*table_args)
+        table_args: list[Any] = [absolute_times]
+        if not absolute_times:
+            table_args.append(additional_offset)
+            table_args.append(
+                self.attributes[
+                    "Time_cds.Status.TAIoffset"
+                ].value  # type: ignore[attr-defined]
+            )
+        track_table = TrackTable(*table_args)
 
         if len(tai) > 0:
-            self.track_table.store_from_list(tai, azi, ele)
+            track_table.store_from_list(tai, azi, ele)
         elif file_name is not None:
-            self.track_table.store_from_csv(file_name)
+            track_table.store_from_csv(file_name)
         else:
             msg = "Missing track table points."
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
 
+        if mode_int == 1:  # New track table queue
+            if self.stop_track_table_schedule_task_event is not None:
+                self.stop_track_table_schedule_task_event.set()
+
+            self.track_table_queue = None
+            self.track_table_scheduled_task = None
+            self.track_table = None
+
+        if self.track_table_queue is None:
+            self.track_table_queue = queue.Queue()
+
+        self.track_table_queue.put(
+            {
+                "track_table": track_table,
+                "mode": mode_int,
+                "result_callback": result_callback,
+            }
+        )
         # Rely on scheduled track table task to send appended values if it is still
         # running (inadequate space on PLC to load all stored points).
         if (
             self.track_table_scheduled_task is None
             or self.track_table_scheduled_task.done()
         ):
-            return self._load_track_table_to_plc(mode_int, result_callback)
-        return ResultCode.NOT_EXECUTED, "Previous track table load task still running."
+            return self._load_track_table_to_plc()
 
-    def _load_track_table_to_plc(
-        self,
-        mode: int,
-        result_callback: Callable[[ResultCode, str], None] | None = None,
-    ) -> tuple[ResultCode, str]:
+        return (ResultCode.EXECUTING, "Track table queued.")
+
+    def _load_track_table_to_plc(self) -> tuple[ResultCode, str]:
         first_load = threading.Event()
         stop_scheduling = threading.Event()
         self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
-            self._schedule_load_next_points(
-                mode, first_load, stop_scheduling, result_callback
-            ),
+            self._schedule_load_next_points(first_load, stop_scheduling),
             self.event_loop,
         )
         self.stop_track_table_schedule_task_event = stop_scheduling
@@ -1892,27 +1899,26 @@ class SecondaryControlUnit:
             msg = "Timed out while attempting to start loading the track table."
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
+
         return (
-            ResultCode.UNKNOWN,
-            f"Started to load {len(self.track_table.tai)} track table points in batches"
-            ". Please wait...",
+            ResultCode.EXECUTING,
+            "First batch of track table points loaded.",
         )
 
     async def _schedule_load_next_points(
         self,
-        mode: int,
         first_load: threading.Event,
         stop_scheduling: threading.Event,
-        result_callback: Callable[[ResultCode, str], None] | None = None,
     ) -> None:
+        table_kwargs = self.track_table_queue.get(block=False)
+        self.track_table = table_kwargs["track_table"]
+        mode = table_kwargs["mode"]
+        result_callback = table_kwargs["result_callback"]
         # One call in case mode is "New"
         result_code, result_msg = await self._load_next_points(mode)
         first_load.set()
         # Then keep calling until local track table is empty or PLC is full
-        while not stop_scheduling.is_set() and result_code not in (
-            ResultCode.NOT_EXECUTED,
-            ResultCode.ENTIRE_TRACK_TABLE_LOADED,
-        ):
+        while not stop_scheduling.is_set() and result_code != ResultCode.NOT_EXECUTED:
             if (
                 result_code
                 not in (
@@ -1928,6 +1934,7 @@ class SecondaryControlUnit:
                     self.track_table.remaining_points(),
                 )
                 break
+
             if result_code == ResultCode.COMMAND_FAILED:
                 # CommandFailed is returned when there is not enough space left
                 # in the PLC track table.
@@ -1941,6 +1948,22 @@ class SecondaryControlUnit:
                         "consumed...",
                     )
                 await asyncio.sleep(45)
+
+            if result_code == ResultCode.ENTIRE_TRACK_TABLE_LOADED:
+                try:
+                    table_kwargs = self.track_table_queue.get(block=False)
+                except queue.Empty:
+                    result_msg = (
+                        "Finished loading all queued track table points to the PLC."
+                    )
+                    break
+
+                if result_callback:
+                    result_callback(result_code, result_msg)
+
+                self.track_table = table_kwargs["track_table"]
+                result_callback = table_kwargs["result_callback"]
+
             result_code, result_msg = await self._load_next_points()
         logger.info("Async track table loading: %s", result_msg)
         if result_callback:
@@ -1953,7 +1976,7 @@ class SecondaryControlUnit:
         if num == 0:
             return (
                 ResultCode.ENTIRE_TRACK_TABLE_LOADED,
-                "Finished loading all track table points to the PLC.",
+                "Finished loading a set of track table points to the PLC.",
             )
 
         # The TrackLoadTable node accepts arrays of length 1000 only.
@@ -1964,14 +1987,27 @@ class SecondaryControlUnit:
             ele.extend(padding)
 
         if self._session_id is None:
-            return ResultCode.NOT_EXECUTED, "Lost authority while loading track table."
+            return (
+                ResultCode.NOT_EXECUTED,
+                "Lost authority while loading track table.",
+            )
 
         # Call TrackLoadTable command and validate result code
-        load_args = [self._session_id, ua.UInt16(mode), ua.UInt16(num), tai, azi, ele]
+        load_args = [
+            self._session_id,
+            ua.UInt16(mode),
+            ua.UInt16(num),
+            tai,
+            azi,
+            ele,
+        ]
         track_load_node = self.nodes[Command.TRACK_LOAD_TABLE.value][0]
         result_code = await track_load_node.call_method(track_load_node, *load_args)
         result_code, result_msg = self._validate_command_result_code(result_code)
-        if result_code not in (ResultCode.COMMAND_DONE, ResultCode.COMMAND_ACTIVATED):
+        if result_code not in (
+            ResultCode.COMMAND_DONE,
+            ResultCode.COMMAND_ACTIVATED,
+        ):
             # Failed to send points so restore index.
             self.track_table.sent_index -= num
         return result_code, result_msg
