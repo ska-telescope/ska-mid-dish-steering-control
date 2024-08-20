@@ -473,6 +473,7 @@ class SecondaryControlUnit:
         self.stop_track_table_schedule_task_event: threading.Event | None = None
         self.track_table_scheduled_task: Future | None = None
         self.track_table: TrackTable | None = None
+        self._opcua_enum_types: dict[str, Type[Enum]] = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -509,6 +510,7 @@ class SecondaryControlUnit:
                     self.server_version,
                 )
         self.populate_node_dicts(self._gui_app, self._use_nodes_cache)
+        self._validate_enum_types()  # Ensures enum types are defined
         logger.info("Successfully connected to server and initialised SCU client")
 
     def __enter__(self) -> "SecondaryControlUnit":
@@ -884,7 +886,7 @@ class SecondaryControlUnit:
             logger.error("%s is not a valid '%s' enum value!", value, enum_type)
             return value
 
-    @cached_property
+    @property
     def opcua_enum_types(self) -> dict[str, Type[Enum]]:
         """
         Retrieve a dictionary of OPC-UA enum types.
@@ -893,7 +895,17 @@ class SecondaryControlUnit:
             value. The value being an enumerated type.
         :rtype: dict
         """
-        result = {}
+        return self._opcua_enum_types
+
+    def _validate_enum_types(self) -> None:
+        """
+        Validate the DSC's OPC-UA enum types.
+
+        Check if the expected OPC-UA enum types are defined after connecting to the
+        server, and if not, try to manually retrieve them by their node ID and set the
+        corresponding ua attributes. Add all found enum types and their values to the
+        'opcua_enum_types' dictionary property.
+        """
         missing_types = []
         expected_types = [
             "AxisSelectType",
@@ -911,15 +923,15 @@ class SecondaryControlUnit:
         ]
         for type_name in expected_types:
             try:
-                result.update({type_name: getattr(ua, type_name)})
+                self._opcua_enum_types.update({type_name: getattr(ua, type_name)})
             except AttributeError:
                 try:
                     enum_node = self.client.get_node(
                         f"ns={self.ns_idx};s=@{type_name}.EnumValues"
                     )
-                    enum_dict = self._create_enum_from_node(type_name, enum_node)
-                    result.update({type_name: enum_dict})
-                    setattr(ua, type_name, enum_dict)
+                    new_enum = self._create_enum_from_node(type_name, enum_node)
+                    self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
+                    setattr(ua, type_name, new_enum)
                 except (RuntimeError, ValueError):
                     missing_types.append(type_name)
         if missing_types:
@@ -928,7 +940,6 @@ class SecondaryControlUnit:
                 "as expected: %s",
                 str(missing_types),
             )
-        return result
 
     def _create_enum_from_node(self, name: str, node: Node) -> Enum:
         enum_values = asyncio.run_coroutine_threadsafe(
@@ -947,6 +958,7 @@ class SecondaryControlUnit:
         node: Node,
         event_loop: asyncio.AbstractEventLoop,
         node_name: str,
+        need_authority: bool = True,
     ) -> Callable:
         """
         Create a command function to execute a method on a specified Node.
@@ -957,6 +969,8 @@ class SecondaryControlUnit:
         :type event_loop: asyncio.AbstractEventLoop
         :param node_name: The full name of the Node.
         :type node_name: str
+        :param need_authority: If the command needs user authority to be executed.
+            Defaults to True.
         :return: A function that can be used to execute a method on the Node.
         :rtype: function
         """
@@ -1008,12 +1022,14 @@ class SecondaryControlUnit:
             """
             result_code = None
             result_output = None
-            try:
-                cmd_args = (
-                    [self._session_id, *args]
-                    if self._session_id is not None
-                    else [*args]
+            if need_authority and self._session_id is None:
+                return (
+                    ResultCode.NOT_EXECUTED,
+                    "DiSQ-SCU has no command authority to execute requested command",
+                    result_output,
                 )
+            try:
+                cmd_args = [self._session_id, *args] if need_authority else [*args]
                 logger.debug(
                     "Calling command node '%s' with args list: %s",
                     node_id,
@@ -1290,7 +1306,10 @@ class SecondaryControlUnit:
             elif node_class == 4:
                 # A command. Add it to the commands dict.
                 commands[node_name] = self._create_command_function(
-                    node, self.event_loop, node_name
+                    node,
+                    self.event_loop,
+                    node_name,
+                    node_name != Command.TAKE_AUTH.value,
                 )
         return (
             nodes,
@@ -1445,7 +1464,7 @@ class SecondaryControlUnit:
         elif node_class == 4:
             # A command. Add it to the commands dict.
             commands[node_name] = self._create_command_function(
-                node, self.event_loop, node_name
+                node, self.event_loop, node_name, node_name != Command.TAKE_AUTH.value
             )
         return nodes, attributes, commands
 
@@ -2066,59 +2085,37 @@ class SecondaryControlUnit:
         logger.info("acknowledge dmc")
         return self.commands[Command.INTERLOCK_ACK.value]()
 
-    def reset_dmc(self, axis: int = None) -> CmdReturn:
+    def reset_dmc(self, axis: int) -> CmdReturn:
         """
-        Reset the DMC (Device Motion Controller) for a specific axis.
+        Reset the DMC  for a specific axis.
 
-        :param axis: The axis for which the DMC should be reset. Valid values are 0 for
-            AZ (Azimuth), 1 for EL (Elevation), 2 for FI (Focus), and 3 for both AZ and
-            EL. Defaults to None.
+        :param axis: The axis to be reset (AxisSelectType).
         :type axis: int
         :return: The result of resetting the DMC for the specified axis.
-        :raises ValueError: If the axis parameter is not provided.
         """
         logger.info("reset dmc")
-        if axis is None:
-            logger.error(
-                "reset_dmc requires an axis as parameter! Try one "
-                "of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
-            )
-            raise ValueError
         return self.commands[Command.RESET.value](ua.UInt16(axis))
 
-    def activate_dmc(self, axis: int = None) -> CmdReturn:
+    def activate_dmc(self, axis: int) -> CmdReturn:
         """
-        Activate the DMC (Digital Motion Controller) for a specific axis.
+        Activate the DMC for a specific axis.
 
-        :param axis: The axis for which to activate the DMC (0=AZ, 1=EL, 2=FI, 3=AZ&EL).
+        :param axis: The axis to activate (AxisSelectType).
         :type axis: int
         :return: The result of activating the DMC for the specified axis.
-        :raises ValueError: If the axis parameter is None.
         """
         logger.info("activate dmc")
-        if axis is None:
-            logger.error(
-                "activate_dmc requires an axis as parameter! "
-                "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
-            )
-            raise ValueError
         return self.commands[Command.ACTIVATE.value](ua.UInt16(axis))
 
-    def deactivate_dmc(self, axis: int = None) -> CmdReturn:
+    def deactivate_dmc(self, axis: int) -> CmdReturn:
         """
         Deactivate a specific axis of the DMC controller.
 
-        :param axis: The axis to deactivate (0=AZ, 1=EL, 2=FI, 3=AZ&EL).
-        :type axis: int, optional
-        :raises ValueError: If the axis parameter is None.
+        :param axis: The axis to deactivate (AxisSelectType).
+        :type axis: int
+        :return: The result of desactivating the DMC for the specified axis.
         """
         logger.info("deactivate dmc")
-        if axis is None:
-            logger.error(
-                "deactivate_dmc requires an axis as parameter! "
-                "Try one of these values: 0=AZ, 1=EL, 2=FI, 3=AZ&EL"
-            )
-            raise ValueError
         return self.commands[Command.DEACTIVATE.value](ua.UInt16(axis))
 
     def move_to_band(self, position: str | int) -> CmdReturn:
@@ -2165,48 +2162,59 @@ class SecondaryControlUnit:
         )
 
     # commands to ACU
+    def stow(self) -> CmdReturn:
+        """
+        Stow the dish.
+
+        :return: The result of the stow command.
+        """
+        logger.info("stow")
+        return self.commands[Command.STOW.value](True)
+
+    def unstow(self) -> CmdReturn:
+        """
+        Unstow the dish.
+
+        :return: The result of the unstow command.
+        """
+        logger.info("unstow")
+        return self.commands[Command.STOW.value](False)
+
     def activate_az(self) -> CmdReturn:
         """
-        Activate the azimuth functionality.
-
-        This method activates azimuth by calling the activate_dmc method with a
-        parameter of 0.
+        Activate the azimuth axis.
 
         :return: The result of activating the azimuth functionality.
         """
         logger.info("activate azimuth")
-        return self.activate_dmc(0)
+        return self.activate_dmc(self.convert_enum_to_int("AxisSelectType", "Az"))
 
     def deactivate_az(self) -> CmdReturn:
         """
-        Deactivate azimuth functionality.
+        Deactivate the azimuth axis.
 
         :return: The result of deactivating azimuth.
-        :raises Exception: May raise exceptions if there are errors during the
-            deactivation process.
         """
         logger.info("deactivate azimuth")
-        return self.deactivate_dmc(0)
+        return self.deactivate_dmc(self.convert_enum_to_int("AxisSelectType", "Az"))
 
     def activate_el(self) -> CmdReturn:
         """
-        Activate the elevation.
+        Activate the elevation axis.
 
         :return: The result of activating elevation.
         """
         logger.info("activate elevation")
-        return self.activate_dmc(1)
+        return self.activate_dmc(self.convert_enum_to_int("AxisSelectType", "El"))
 
     def deactivate_el(self) -> CmdReturn:
         """
-        Deactivate elevation.
-
-        This method deactivates elevation.
+        Deactivate the elevation axis.
 
         :return: The result of deactivating elevation.
         """
         logger.info("deactivate elevation")
-        return self.deactivate_dmc(1)
+        return self.deactivate_dmc(self.convert_enum_to_int("AxisSelectType", "El"))
 
     def activate_fi(self) -> CmdReturn:
         """
@@ -2215,7 +2223,7 @@ class SecondaryControlUnit:
         :return: The result of activating the feed indexer.
         """
         logger.info("activate feed indexer")
-        return self.activate_dmc(2)
+        return self.activate_dmc(self.convert_enum_to_int("AxisSelectType", "Fi"))
 
     def deactivate_fi(self) -> CmdReturn:
         """
@@ -2224,26 +2232,26 @@ class SecondaryControlUnit:
         :return: The result of deactivating the feed indexer.
         """
         logger.info("deactivate feed indexer")
-        return self.deactivate_dmc(2)
+        return self.deactivate_dmc(self.convert_enum_to_int("AxisSelectType", "Fi"))
 
     def abs_azimuth(self, az_angle: float, az_vel: float) -> CmdReturn:
         """
-        Calculate the absolute azimuth based on azimuth angle and azimuth velocity.
+        Move to the absolute azimuth angle with given velocity.
 
         :param az_angle: The azimuth angle value.
         :type az_angle: float
-        :param az_vel: The azimuth velocity value.
+        :param az_vel: The azimuth velocity.
         :type az_vel: float
         :return: The result of the Slew2AbsSingleAx command.
         """
         logger.info(f"abs az: {az_angle:.4f} vel: {az_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
-            ua.UInt16(0), az_angle, az_vel
+            self.convert_enum_to_int("AxisSelectType", "Az"), az_angle, az_vel
         )
 
     def abs_elevation(self, el_angle: float, el_vel: float) -> CmdReturn:
         """
-        Calculate the absolute elevation angle and velocity.
+        Move to the absolute elevation angle with given velocity.
 
         :param el_angle: The absolute elevation angle.
         :type el_angle: float
@@ -2253,7 +2261,7 @@ class SecondaryControlUnit:
         """
         logger.info(f"abs el: {el_angle:.4f} vel: {el_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
-            ua.UInt16(1), el_angle, el_vel
+            self.convert_enum_to_int("AxisSelectType", "El"), el_angle, el_vel
         )
 
     def abs_feed_indexer(self, fi_angle: float, fi_vel: float) -> CmdReturn:
@@ -2268,7 +2276,7 @@ class SecondaryControlUnit:
         """
         logger.info(f"abs fi: {fi_angle:.4f} vel: {fi_vel:.4f}")
         return self.commands[Command.SLEW2ABS_SINGLE_AX.value](
-            ua.UInt16(2), fi_angle, fi_vel
+            self.convert_enum_to_int("AxisSelectType", "Fi"), fi_angle, fi_vel
         )
 
     def load_static_offset(self, az_offset: float, el_offset: float) -> CmdReturn:
@@ -2289,8 +2297,8 @@ class SecondaryControlUnit:
 def SCU(  # noqa: N802
     host: str = "127.0.0.1",
     port: int = 4840,
-    endpoint: str = "/OPCUA/SimpleServer",
-    namespace: str = "CETC54",
+    endpoint: str = "",
+    namespace: str = "",
     username: str | None = None,
     password: str | None = None,
     timeout: float = 10.0,
