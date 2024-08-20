@@ -1906,7 +1906,8 @@ class SecondaryControlUnit:
 
         return (
             ResultCode.EXECUTING,
-            "First batch of track table points loaded.",
+            f"First batch of {len(self.track_table.tai)} track table points loaded "
+            f"successfully. Continuing with loading...",
         )
 
     async def _schedule_load_next_points(
@@ -1929,15 +1930,17 @@ class SecondaryControlUnit:
                     ResultCode.COMMAND_DONE,
                     ResultCode.COMMAND_ACTIVATED,
                     ResultCode.COMMAND_FAILED,
+                    ResultCode.ENTIRE_TRACK_TABLE_LOADED,
                 )
                 or result_code == ResultCode.UNKNOWN
             ):
-                logger.error(
-                    "Failed to load all points to PLC (%s). %s remaining from %s.",
-                    result_code,
-                    self.track_table.remaining_points(),
-                    self.track_table.get_details_string(),
+                msg = (
+                    f"Failed to load all points to PLC. Reason: {result_msg}. "
+                    f"{self.track_table.remaining_points()} remaining from "
+                    f"{self.track_table.get_details_string()}."
                 )
+                logger.error(msg)
+                result_callback(result_code, msg)
                 break
 
             if result_code == ResultCode.COMMAND_FAILED:
@@ -1950,8 +1953,9 @@ class SecondaryControlUnit:
                 if result_callback:
                     result_callback(
                         result_code,
-                        f"PLC track table full, waiting {sleep_length} seconds for "
-                        "loaded points to be consumed...",
+                        "PLC track table full after loading "
+                        f"{self.track_table.num_loaded_batches} batches. Waiting "
+                        f"{sleep_length} seconds for loaded points to be consumed...",
                     )
                 await asyncio.sleep(sleep_length)
 
@@ -1971,9 +1975,7 @@ class SecondaryControlUnit:
                 result_callback = table_kwargs["result_callback"]
 
             result_code, result_msg = await self._load_next_points()
-        logger.info("Async track table loading: %s", result_msg)
-        if result_callback:
-            result_callback(result_code, result_msg)
+        logger.debug("Async track table loading: %s", result_msg)
 
     async def _load_next_points(self, mode: int = 0) -> tuple[ResultCode, str]:
         num, tai, azi, ele = self.track_table.get_next_points(1000)
@@ -1982,7 +1984,7 @@ class SecondaryControlUnit:
         if num == 0:
             return (
                 ResultCode.ENTIRE_TRACK_TABLE_LOADED,
-                f"Finished loading track table {self.track_table.get_details_string} "
+                f"Finished loading track table {self.track_table.get_details_string()} "
                 f"to the PLC. {self.track_table.sent_index} points have been sent in "
                 f"{self.track_table.num_loaded_batches} batches.",
             )
@@ -1998,7 +2000,7 @@ class SecondaryControlUnit:
             return (
                 ResultCode.NOT_EXECUTED,
                 "Lost authority while loading track table "
-                f"{self.track_table.get_details_string}.",
+                f"{self.track_table.get_details_string()}.",
             )
 
         # Call TrackLoadTable command and validate result code
