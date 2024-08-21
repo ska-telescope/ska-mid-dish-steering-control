@@ -1,4 +1,4 @@
-"""System Control Unit library for an SKA-Mid Dish OPC UA server."""
+"""Secondary Control Unit for a SKA-Mid Dish Structure Controller OPC UA server."""
 
 # pylint: disable=too-many-lines, broad-exception-caught
 import asyncio
@@ -11,13 +11,13 @@ import queue
 import socket
 import threading
 import time
+from concurrent.futures import Future
 from enum import Enum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Final, Type, TypedDict
 
-import numpy
 import yaml  # type: ignore
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
@@ -28,6 +28,7 @@ from platformdirs import user_cache_dir
 
 from disq import configuration
 from disq.constants import PACKAGE_VERSION, CmdReturn, Command, ResultCode
+from disq.track_table import TrackTable
 
 logger = logging.getLogger("sculib")
 
@@ -281,16 +282,16 @@ CmdDict = dict[str, Callable[..., CmdReturn]]
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
 class SecondaryControlUnit:
     """
-    System Control Unit.
+    Secondary Control Unit for a SKA-Mid Dish Structure Controller OPC UA server.
 
-    Small library that eases the pain when connecting to an OPC UA server and calling
+    An OPC UA client class that simplifies connecting to a server and calling
     methods on it, reading or writing attributes.
 
     How to:
     - Import the library:
 
     ```
-    from sculib import SCU, Command
+    from disq import SCU, Command
     ```
     - Instantiate an SCU object and connect to the server. Provided here are the
       defaults which can be overwritten by specifying the named parameter:
@@ -468,6 +469,10 @@ class SecondaryControlUnit:
         self.server_nodes: NodeDict
         self.server_attributes: AttrDict
         self.server_commands: CmdDict
+        self.track_table_queue: queue.Queue | None = None
+        self.stop_track_table_schedule_task_event: threading.Event | None = None
+        self.track_table_scheduled_task: Future | None = None
+        self.track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[Enum]] = {}
 
     def connect_and_setup(self) -> None:
@@ -784,7 +789,7 @@ class SecondaryControlUnit:
         :param user: Authority user name - DscCmdAuthorityType enum.
         :type user: str | int (ua.DscCmdAuthorityType)
         :return: The result of the command execution.
-        :rtype: tuple[int, str]
+        :rtype: tuple[ResultCode, str]
         """
         user_int = (
             self.convert_enum_to_int("DscCmdAuthorityType", user)
@@ -816,7 +821,7 @@ class SecondaryControlUnit:
         Release command authority.
 
         :return: The result of the command execution.
-        :rtype: tuple[int, str]
+        :rtype: tuple[ResultCode, str]
         """
         if self._user is not None and self._session_id is not None:
             code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
@@ -986,7 +991,11 @@ class SecondaryControlUnit:
             def empty_func(
                 *args: Any,  # pylint: disable=unused-argument
             ) -> CmdReturn:
-                return ResultCode.NOT_EXECUTED, "No command method to call", None
+                return (
+                    ResultCode.NOT_EXECUTED,
+                    "No command method to call",
+                    None,
+                )
 
             return empty_func
 
@@ -1035,21 +1044,9 @@ class SecondaryControlUnit:
                     result_output = result
                 else:
                     result_code_int = result
-                # Check for valid result code
-                result_code = (
-                    ResultCode(result_code_int)
-                    if result_code_int in ResultCode.__members__.values()
-                    else ResultCode.UNKNOWN
+                result_code, result_msg = self._validate_command_result_code(
+                    result_code_int
                 )
-                # Set result message
-                if result_code != ResultCode.UNKNOWN:
-                    result_msg = (
-                        ua.CmdResponseType(result_code).name
-                        if hasattr(ua, "CmdResponseType")
-                        else result_code.name
-                    )
-                else:
-                    result_msg = result_code.name
                 # Handle specific result codes
                 if result_code == ResultCode.UNKNOWN:
                     logger.warning(
@@ -1086,6 +1083,32 @@ class SecondaryControlUnit:
             return result_code, result_msg, result_output
 
         return fn
+
+    def _validate_command_result_code(self, result_code: int) -> tuple[ResultCode, str]:
+        """
+        Validate a command's result code and return a ResultCode enum and string value.
+
+        :param result_code: Raw command result code integer
+        :type result_code: int
+        :return: A tuple containing the ResultCode enum and message.
+        :rtype: tuple[ResultCode, str]
+        """
+        # Check for valid result code
+        result_enum = (
+            ResultCode(result_code)
+            if result_code in ResultCode.__members__.values()
+            else ResultCode.UNKNOWN
+        )
+        # Set result message
+        if result_enum != ResultCode.UNKNOWN:
+            result_msg = (
+                ua.CmdResponseType(result_enum).name
+                if hasattr(ua, "CmdResponseType")
+                else result_enum.name
+            )
+        else:
+            result_msg = result_enum.name
+        return result_enum, result_msg
 
     def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
         """
@@ -1706,10 +1729,11 @@ class SecondaryControlUnit:
         nodes: set[Node] = set()
         missing_nodes = []
         for attribute in attributes:
-            if attribute in self.nodes:
-                nodes.add(self.nodes[attribute][0])
-            else:
-                missing_nodes.append(attribute)
+            if attribute != "":
+                if attribute in self.nodes:
+                    nodes.add(self.nodes[attribute][0])
+                else:
+                    missing_nodes.append(attribute)
         if len(missing_nodes) > 0:
             logger.warning(
                 "The following OPC-UA attributes not found in nodes dict and not "
@@ -1775,61 +1799,281 @@ class SecondaryControlUnit:
             values.append(self.subscription_queue.get(block=False, timeout=0.1))
         return values
 
-    def load_track_table_file(self, file_name: str) -> numpy.ndarray:
+    def load_track_table(
+        self,
+        mode: str | int = 0,
+        tai: list[float] = [],
+        azi: list[float] = [],
+        ele: list[float] = [],
+        file_name: str | None = None,
+        absolute_times: bool = True,
+        additional_offset: float = 10.1,  # TODO Return to 5 when PLCs updated
+        result_callback: Callable[[ResultCode, str], None] | None = None,
+    ) -> tuple[ResultCode, str]:
         """
-        Load a track table file to upload with the load_program_track command.
+        Upload a track table to the PLC from lists OR a CSV file.
 
-        - positions = self.load_track_table_file(
-            os.getenv('HOME')+'/Downloads/radial.csv')
-        - await scu.load_program_track(asyncua.uaLoadEnumTypes.New,
-            len(positions),
-            positions[:, 0],
-            positions[:, 1],
-            positions[:, 2])
+        Number of points for tai, azimuth, and elevation must be equal.
+        Supports modes New and Append for lists, and New only for a CSV file.
+        Although a PLC can only hold a maximum of 10,000 points at a time, the lists or
+        CSV file can contain an arbritary number of points and this function will
+        store them all locally and load them to the PLC when space is made avaiable by
+        the PLC consuming loaded points when tracking has been started. However a
+        subsequent call with mode 1: "New" will cancel any points waiting to be
+        loaded.
+        For tests that generate points just-in-time use lists. First call this method
+        with mode 1: "New", then make all subsequent calls with mode 2: "Append".
+        If absolute_times is false, the value of Time_cds.Status.TAIoffset will be
+        retrieved from the PLC and added to the tai times supplied.
 
+        :param int mode: Choose from 0 for Append, and 1 for New. Default is Append.
+          # TODO add reset.
+        :param list[float] tai: A list of times to make up the track table points.
+        :param list[float] azi: A list of azimuths to make up the track table points.
+        :param list[float] ele: A list of elevations to make up the track table points.
         :param str file_name: File name of the track table file including its path.
-        :return: 3d numpy array that contains [time offset, az position, el position]
-        :rtype: numpy.array
+        :param bool absolute_times: Whether the time column is a real time or a relative
+            time. Default True.
+        :param float additional_offset: Add additional time to every point. Only has an
+            effect when absolute_times is False. Default 10.1
+        :param result_callback: Callback with result code and message when task finishes
+        :return: The result of the command execution.
+        :rtype: tuple[ResultCode, str]
         """
-        try:
-            lines = []
-            # Load the track table file.
-            with open(file_name, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            # Remove the header line because it does not contain a position.
-            lines.pop(0)
-            # Remove a trailing '\n' and split the cleaned line at every ','.
-            cleaned_lines = [line.rstrip("\n").split(",") for line in lines]
-            # Return an array that contains the time offsets and positions.
-            return numpy.array(cleaned_lines, dtype=float)
-        except Exception as e:
-            logger.error(
-                "Could not load or convert the track table file '%s': %s",
-                file_name,
-                e,
-            )
-            raise e
+        if self._session_id is None:
+            msg = "Need to take command authority before loading a track table."
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
 
-    def track_table_reset_and_upload_from_file(self, file_name: str) -> None:
-        """
-        Direct upload a track table to the dish structure's OPC UA server.
-
-        :param file_name: File name of the track table file including its path.
-        :type file_name: str
-        """
-        # pylint: disable=no-member
-        positions = self.load_track_table_file(file_name)
-        # Reset the currently loaded track table.
-        zero = numpy.zeros(1)
-        self.load_program_track(ua.LoadModeType.Reset, 0, zero, zero, zero)
-        # Submit the new track table.
-        self.load_program_track(
-            ua.LoadModeType.New,
-            len(positions),
-            positions[:, 0],
-            positions[:, 1],
-            positions[:, 2],
+        mode_int = (
+            self.convert_enum_to_int("LoadModeType", mode)
+            if isinstance(mode, str)
+            else mode
         )
+        if file_name is not None and mode_int == 0 and not absolute_times:
+            msg = (
+                "Cannot append a track table file with relative times. Please "
+                "use mode 1: 'New'"
+            )
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
+
+        table_args: list[Any] = [absolute_times]
+        if not absolute_times:
+            table_args.append(additional_offset)
+            table_args.append(
+                self.attributes[
+                    "Time_cds.Status.TAIoffset"
+                ].value  # type: ignore[attr-defined]
+            )
+        track_table = TrackTable(*table_args)
+
+        if len(tai) > 0:
+            track_table.store_from_list(tai, azi, ele)
+        elif file_name is not None:
+            track_table.store_from_csv(file_name)
+        else:
+            msg = "Missing track table points."
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
+
+        if mode_int == 1:  # New track table queue
+            if self.stop_track_table_schedule_task_event is not None:
+                self.stop_track_table_schedule_task_event.set()
+
+            self.track_table_queue = None
+            self.track_table_scheduled_task = None
+            self.track_table = None
+
+        if self.track_table_queue is None:
+            self.track_table_queue = queue.Queue()
+
+        self.track_table_queue.put(
+            {
+                "track_table": track_table,
+                "mode": mode_int,
+                "result_callback": result_callback,
+            }
+        )
+        # Rely on scheduled track table task to send appended values if it is still
+        # running (inadequate space on PLC to load all stored points).
+        if (
+            self.track_table_scheduled_task is None
+            or self.track_table_scheduled_task.done()
+        ):
+            return self._load_track_table_to_plc()
+
+        return (ResultCode.EXECUTING, "Track table queued.")
+
+    def _load_track_table_to_plc(self) -> tuple[ResultCode, str]:
+        first_load = threading.Event()
+        stop_scheduling = threading.Event()
+        self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
+            self._schedule_load_next_points(first_load, stop_scheduling),
+            self.event_loop,
+        )
+        self.stop_track_table_schedule_task_event = stop_scheduling
+        if not first_load.wait(3):
+            stop_scheduling.set()
+            table_info = ""
+            if self.track_table:
+                table_info = " " + self.track_table.get_details_string()
+
+            msg = f"Timed out while loading first batch of track table{table_info}."
+            logger.error(msg)
+            return ResultCode.NOT_EXECUTED, msg
+
+        return (
+            ResultCode.EXECUTING,
+            f"First batch of {len(self.track_table.tai)} track table points loaded "
+            f"successfully. Continuing with loading...",
+        )
+
+    async def _schedule_load_next_points(
+        self,
+        first_load: threading.Event,
+        stop_scheduling: threading.Event,
+    ) -> None:
+        table_kwargs = self.track_table_queue.get(block=False)
+        self.track_table = table_kwargs["track_table"]
+        mode = table_kwargs["mode"]
+        result_callback = table_kwargs["result_callback"]
+        # One call in case mode is "New"
+        result_code, result_msg = await self._load_next_points(mode)
+        first_load.set()
+        # Then keep calling until local track table is empty or PLC is full
+        while not stop_scheduling.is_set() and result_code != ResultCode.NOT_EXECUTED:
+            if (
+                result_code
+                not in (
+                    ResultCode.COMMAND_DONE,
+                    ResultCode.COMMAND_ACTIVATED,
+                    ResultCode.COMMAND_FAILED,
+                    ResultCode.ENTIRE_TRACK_TABLE_LOADED,
+                )
+                or result_code == ResultCode.UNKNOWN
+            ):
+                msg = (
+                    f"Failed to load all points to PLC. Reason: {result_msg}. "
+                    f"{self.track_table.remaining_points()} remaining from "
+                    f"{self.track_table.get_details_string()}."
+                )
+                logger.error(msg)
+                result_callback(result_code, msg)
+                break
+
+            if result_code == ResultCode.COMMAND_FAILED:
+                # CommandFailed is returned when there is not enough space left
+                # in the PLC track table.
+                # Allow time for the loaded points to be consumed. Minimum time between
+                # points is 50ms, at that rate 1000 points would take 50 seconds. Check
+                # more often than this to ensure PLC does not run out of points.
+                sleep_length = 45
+                if result_callback:
+                    result_callback(
+                        result_code,
+                        "PLC track table full after loading "
+                        f"{self.track_table.num_loaded_batches} batches. Waiting "
+                        f"{sleep_length} seconds for loaded points to be consumed...",
+                    )
+                await asyncio.sleep(sleep_length)
+
+            if result_code == ResultCode.ENTIRE_TRACK_TABLE_LOADED:
+                if result_callback:
+                    result_callback(result_code, result_msg)
+
+                try:
+                    table_kwargs = self.track_table_queue.get(block=False)
+                except queue.Empty:
+                    result_msg = (
+                        "Finished loading all queued track table points to the PLC."
+                    )
+                    break
+
+                self.track_table = table_kwargs["track_table"]
+                result_callback = table_kwargs["result_callback"]
+
+            result_code, result_msg = await self._load_next_points()
+        logger.debug("Async track table loading: %s", result_msg)
+
+    async def _load_next_points(self, mode: int = 0) -> tuple[ResultCode, str]:
+        num, tai, azi, ele = self.track_table.get_next_points(1000)
+        logger.debug(f"_load_next_points got {num} points")
+
+        if num == 0:
+            return (
+                ResultCode.ENTIRE_TRACK_TABLE_LOADED,
+                f"Finished loading track table {self.track_table.get_details_string()} "
+                f"to the PLC. {self.track_table.sent_index} points have been sent in "
+                f"{self.track_table.num_loaded_batches} batches.",
+            )
+
+        # The TrackLoadTable node accepts arrays of length 1000 only.
+        if num < 1000:
+            padding = [0] * (1000 - num)
+            tai.extend(padding)
+            azi.extend(padding)
+            ele.extend(padding)
+
+        if self._session_id is None:
+            return (
+                ResultCode.NOT_EXECUTED,
+                "Lost authority while loading track table "
+                f"{self.track_table.get_details_string()}.",
+            )
+
+        # Call TrackLoadTable command and validate result code
+        load_args = [
+            self._session_id,
+            ua.UInt16(mode),
+            ua.UInt16(num),
+            tai,
+            azi,
+            ele,
+        ]
+        track_load_node = self.nodes[Command.TRACK_LOAD_TABLE.value][0]
+        result_code = await track_load_node.call_method(track_load_node, *load_args)
+        result_code, result_msg = self._validate_command_result_code(result_code)
+        if result_code not in (
+            ResultCode.COMMAND_DONE,
+            ResultCode.COMMAND_ACTIVATED,
+        ):
+            # Failed to send points so restore index.
+            self.track_table.sent_index -= num
+        else:
+            self.track_table.num_loaded_batches += 1
+
+        return result_code, result_msg
+
+    def start_tracking(
+        self,
+        interpol: str | int = 0,
+        now: bool = True,
+        start_time: float | None = None,
+    ) -> tuple[ResultCode, str]:
+        """
+        Start a loaded track table.
+
+        :param int interpol: The desired interpolation method. Defaults to 0; Spline.
+        :param bool now: Whether to start tracking immediately or not. Default True.
+        :param float start_time: The track start time in seconds after SKAO Epoch (TAI
+            Offset). Only applicable if now is False.
+        :return CmdReturn: The response to TrackStart from the PLC.
+        """
+        interpol_int = (
+            self.convert_enum_to_int("InterpolType", interpol)
+            if isinstance(interpol, str)
+            else interpol
+        )
+        if now:
+            start_time = self.attributes[
+                "Time_cds.Status.TAIoffset"
+            ].value  # type: ignore[attr-defined]
+
+        code, msg, _ = self.commands[Command.TRACK_START.value](
+            ua.UInt16(interpol_int), start_time
+        )
+        return code, msg
 
     # commands to DMC state - dish management controller
     def interlock_acknowledge_dmc(self) -> CmdReturn:
@@ -2047,173 +2291,6 @@ class SecondaryControlUnit:
         """
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
         return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](az_offset, el_offset)
-
-    def load_program_track(
-        self,
-        load_type: str,
-        entries: int,
-        t: numpy.ndarray,
-        az: numpy.ndarray,
-        el: numpy.ndarray,
-    ) -> CmdReturn:
-        """
-        Load a program track with provided entries, time offsets, azimuth and elevation.
-
-        :param load_type: Type of track data being loaded.
-        :type load_type: str
-        :param entries: Number of entries in the track table.
-        :type entries: int
-        :param t: List of time offset values.
-        :type t: numpy.ndarray
-        :param az: List of azimuth values.
-        :type az: numpy.ndarray
-        :param el: List of elevation values.
-        :type el: numpy.ndarray
-        :raises IndexError: If the provided track table contents are not aligned.
-        """
-        logger.info("%s", load_type)
-
-        # unused
-        # LOAD_TYPES = {
-        #     'LOAD_NEW' : 0,
-        #     'LOAD_ADD' : 1,
-        #     'LOAD_RESET' : 2}
-
-        # unused
-        # table selector - to tidy for future use
-        # ptrackA = 11
-        # TABLE_SELECTOR =  {
-        #     'pTrackA' : 11,
-        #     'pTrackB' : 12,
-        #     'oTrackA' : 21,
-        #     'oTrackB' : 22}
-
-        # unused
-        # funny thing is SCU wants 50 entries, even for LOAD RESET! or if you send less
-        # then you have to pad the table
-        # if entries != 50:
-        #     padding = 50 - entries
-        #     t  += [0] * padding
-        #     az += [0] * padding
-        #     el += [0] * padding
-
-        # pylint: disable=too-many-boolean-expressions
-        if (entries > 0) and (
-            (entries != len(t))
-            or (entries != len(az))
-            or (entries != len(el))
-            or (len(t) != len(az))
-            or (len(az) != len(el))
-            or (len(az) != len(el))
-        ):
-            e = IndexError()
-            msg = (
-                "The provided track table contents are not usable because the contents "
-                "are not aligned. The given number of track table entries and the size "
-                "of each of the three arrays (t, az and el) need to match: Specified "
-                "number of entries = %d, number of elements in time offset array = %d, "
-                "number of elements in azimuth array = %d, number of elements in "
-                "elevation array = %d."
-            )
-            logger.error(msg, entries, len(t), len(az), len(el))
-            raise e
-
-        # Format the track table in the new way that preceeds every row with
-        # its row number.
-        table = ""
-        for index in range(len(t)):  # pylint: disable=consider-using-enumerate
-            row = f"{index:03d}:{t[index]},{az[index]},{el[index]};"
-            table += row
-        logger.debug(f"Track table that will be sent to DS: {table}")
-        byte_string = table.encode()
-        try:
-            return self.commands[Command.TRACK_LOAD_TABLE.value](
-                load_type,
-                ua.UInt16(entries),
-                ua.ByteString(byte_string),
-            )
-        except Exception:
-            logger.warning(
-                "Tried to upload a track table in the new format but this failed. "
-                "Will now try to uplad the track table in the old format...",
-                exc_info=True,
-            )
-
-        # If I get here, then the OPC UA server likely did not support the new
-        # format. Try again with the old format.
-        table = ""
-        table = f"{entries:03d}:"
-        for index in range(0, entries):
-            row = f"{t[index]},{az[index]},{el[index]};"
-            table += row
-        logger.debug(f"Track table that will be sent to DS: {table}")
-        byte_string = table.encode()
-        try:
-            return self.commands[Command.TRACK_LOAD_TABLE.value](
-                load_type,
-                ua.UInt16(entries),
-                ua.ByteString(byte_string),
-            )
-        except Exception as e:
-            logger.exception(
-                "Uploading of a track table in the old format failed too. "
-                "Please check that your track table is correctly formatted, "
-                "not empty and contains valid entries."
-            )
-            raise e
-
-    def start_program_track(self, interpol_mode: int) -> CmdReturn:
-        """
-        Start tracking a program.
-
-        :return: The result of starting the program track.
-        """
-        # TODO
-        return self.commands[Command.TRACK_START.value](ua.UInt16(interpol_mode))
-
-    def acu_ska_track(self) -> CmdReturn:
-        """ACU SKA track."""
-        # TODO
-        logger.info("acu ska track")
-        return self.commands[Command.TRACK_LOAD_TABLE.value](ua.UInt16(0))
-
-    def _format_tt_line(
-        self,
-        t: float,
-        az: float,
-        el: float,
-        capture_flag: int = 1,
-        parallactic_angle: float = 0.0,
-    ) -> str:
-        """
-        Something will provide a time, az, and el as minimum.
-
-        Time must already be absolute time desired in MJD format. Assumption is capture
-        flag and parallactic angle will not be used.
-        """
-        f_str = (
-            f"{t:.12f} {az:.6f} {el:.6f} {capture_flag:.0f} "
-            "{parallactic_angle:.6f}\n"
-        )
-        return f_str
-
-    def _format_body(self, t: list[float], az: list[float], el: list[float]) -> str:
-        """
-        Format the body of a message with timestamp, azimuth, and elevation values.
-
-        :param t: List of timestamps.
-        :type t: list
-        :param az: List of azimuth values.
-        :type az: list
-        :param el: List of elevation values.
-        :type el: list
-        :return: Formatted body of the message.
-        :rtype: str
-        """
-        body = ""
-        for i in range(len(t)):  # pylint: disable=consider-using-enumerate
-            body += self._format_tt_line(t[i], az[i], el[i])
-        return body
 
 
 # pylint: disable=too-many-arguments, invalid-name
