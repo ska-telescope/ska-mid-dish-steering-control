@@ -1507,6 +1507,11 @@ class SteeringControlUnit:
         """
         dt_id = ""
         if isinstance(attribute, str):
+            if attribute == "Pointing.Status.CurrentPointing":
+                # Special case where the ICD type is Double but the node actually
+                # returns a 7-element array.
+                return attribute
+
             node, _ = self.nodes[attribute]
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
