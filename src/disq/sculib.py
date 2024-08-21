@@ -138,7 +138,6 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Final, Type, TypedDict
 
-import yaml  # type: ignore
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
@@ -154,57 +153,6 @@ logger = logging.getLogger("sculib")
 
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
-
-
-def configure_logging(default_log_level: int = logging.INFO) -> None:
-    """
-    Configure logging settings based on a YAML configuration file.
-
-    :param default_log_level: The default logging level to use if no configuration file
-        is found. Defaults to logging.INFO.
-    :raises ValueError: If an error occurs while configuring logging from the file.
-    """
-    disq_log_config_file = Path("disq_logging_config.yaml")
-    if disq_log_config_file.exists() is False:
-        disq_log_config_file = Path(
-            resources.files(__package__) / "default_logging_config.yaml"  # type: ignore
-        )
-    config = None
-    if disq_log_config_file.exists():
-        with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
-            try:
-                config = yaml.safe_load(f.read())
-            except Exception as e:
-                print(f"{type(e).__name__}: '{e}'")
-                print(
-                    "WARNING: Unable to read logging configuration file "
-                    f"{disq_log_config_file}"
-                )
-        try:
-            at_time = datetime.time.fromisoformat(
-                config["handlers"]["file_handler"]["atTime"]
-            )
-            config["handlers"]["file_handler"]["atTime"] = at_time
-        except KeyError as e:
-            print(f"WARNING: {e} not found in logging configuration for file_handler")
-    else:
-        print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
-
-    if config is None:
-        print(f"Reverting to basic logging config at level:{default_log_level}")
-        logging.basicConfig(level=default_log_level)
-    else:
-        Path("logs").mkdir(parents=True, exist_ok=True)
-        try:
-            logging.config.dictConfig(config)
-        except ValueError as e:
-            print(f"{type(e).__name__}: '{e}'")
-            print(
-                "WARNING: Caught exception. Unable to configure logging from file "
-                f"{disq_log_config_file}. Reverting to logging to the console "
-                "(basicConfig)."
-            )
-            logging.basicConfig(level=default_log_level)
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -2210,7 +2158,7 @@ def SCU_from_config(  # noqa: N802
     :return: an initialised and connected instance of the SteeringControlUnit class or
         None if the connection to the OPC-UA server failed.
     """
-    configure_logging()
+    configuration.configure_logging()
     sculib_args: dict = configuration.get_config_sculib_args(
         ini_file, server_name=server_name
     )
