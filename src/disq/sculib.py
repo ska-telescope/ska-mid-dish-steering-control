@@ -442,30 +442,30 @@ class SteeringControlUnit:
         self._use_nodes_cache = use_nodes_cache
         self._app_name = app_name
         # Other local variables
-        self.client: Client | None = None
-        self.event_loop_thread: threading.Thread | None = None
-        self.subscription_handler = None
-        self.subscriptions: dict = {}
-        self.subscription_queue: queue.Queue = queue.Queue()
+        self._client: Client | None = None
+        self._event_loop_thread: threading.Thread | None = None
+        self._subscription_handler = None
+        self._subscriptions: dict = {}
+        self._subscription_queue: queue.Queue = queue.Queue()
         self._user: int | None = None
         self._session_id: ua.UInt16 | None = None
         self._server_url: str
         self._server_str_id: str
         self.plc_prg: Node
-        self.ns_idx: int
+        self._ns_idx: int
         self.nodes: NodeDict
-        self.nodes_reversed: dict[tuple[Node, int], str]
+        self._nodes_reversed: dict[tuple[Node, int], str]
         self.attributes: AttrDict
         self.commands: CmdDict
         self._plc_prg_nodes_timestamp: str
         self.parameter: Node
-        self.parameter_ns_idx: int
+        self._parameter_ns_idx: int
         self.parameter_nodes: NodeDict
         self.parameter_attributes: AttrDict
-        self.track_table_queue: queue.Queue | None = None
-        self.stop_track_table_schedule_task_event: threading.Event | None = None
-        self.track_table_scheduled_task: Future | None = None
-        self.track_table: TrackTable | None = None
+        self._track_table_queue: queue.Queue | None = None
+        self._stop_track_table_schedule_task_event: threading.Event | None = None
+        self._track_table_scheduled_task: Future | None = None
+        self._track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[Enum]] = {}
 
     def connect_and_setup(self) -> None:
@@ -475,7 +475,7 @@ class SteeringControlUnit:
         :raises Exception: If connection to OPC UA server fails.
         """
         try:
-            self.client = self.connect()
+            self._client = self.connect()
         except Exception as e:
             msg = (
                 "Cannot connect to the OPC UA server. Please "
@@ -534,11 +534,11 @@ class SteeringControlUnit:
 
         Stop the event loop if it was started in a separate thread.
         """
-        if self.event_loop_thread is not None:
+        if self._event_loop_thread is not None:
             # Signal the event loop thread to stop.
             self.event_loop.call_soon_threadsafe(self.event_loop.stop)
             # Join the event loop thread once it is done processing tasks.
-            self.event_loop_thread.join()
+            self._event_loop_thread.join()
 
     def __exit__(self, *args: Any) -> None:
         """Disconnect from server and clean up client resources."""
@@ -554,14 +554,14 @@ class SteeringControlUnit:
         """
         try:
             version_node = asyncio.run_coroutine_threadsafe(
-                self.client.nodes.objects.get_child(
+                self._client.nodes.objects.get_child(
                     [
-                        f"{self.ns_idx}:Logic",
-                        f"{self.ns_idx}:Application",
-                        f"{self.ns_idx}:PLC_PRG",
-                        f"{self.ns_idx}:Management",
-                        f"{self.ns_idx}:NamePlate",
-                        f"{self.ns_idx}:DscSoftwareVersion",
+                        f"{self._ns_idx}:Logic",
+                        f"{self._ns_idx}:Application",
+                        f"{self._ns_idx}:PLC_PRG",
+                        f"{self._ns_idx}:Management",
+                        f"{self._ns_idx}:NamePlate",
+                        f"{self._ns_idx}:DscSoftwareVersion",
                     ]
                 ),
                 self.event_loop,
@@ -584,7 +584,7 @@ class SteeringControlUnit:
         """
         return self._plc_prg_nodes_timestamp
 
-    def run_event_loop(
+    def _run_event_loop(
         self,
         event_loop: asyncio.AbstractEventLoop,
         thread_started_event: threading.Event,
@@ -613,16 +613,16 @@ class SteeringControlUnit:
         """
         event_loop = asyncio.new_event_loop()
         thread_started_event = threading.Event()
-        self.event_loop_thread = threading.Thread(
-            target=self.run_event_loop,
+        self._event_loop_thread = threading.Thread(
+            target=self._run_event_loop,
             args=(event_loop, thread_started_event),
             name=f"asyncio event loop for sculib instance {self.__class__.__name__}",
             daemon=True,
         )
-        self.event_loop_thread.start()
+        self._event_loop_thread.start()
         thread_started_event.wait(5.0)  # Wait for the event loop thread to start
 
-    def set_up_encryption(self, client: Client, user: str, pw: str) -> None:
+    def _set_up_encryption(self, client: Client, user: str, pw: str) -> None:
         """
         Set up encryption for the client with the given user credentials.
 
@@ -668,7 +668,6 @@ class SteeringControlUnit:
             self.event_loop,
         ).result()
 
-    # pylint: disable=too-many-arguments
     def connect(self) -> Client:
         """
         Connect to an OPC UA server.
@@ -685,7 +684,7 @@ class SteeringControlUnit:
         client.name = f"{self._app_name} @{hostname}"
         client.description = f"{self._app_name} @{hostname}"
         if self.username is not None and self.password is not None:
-            self.set_up_encryption(client, self.username, self.password)
+            self._set_up_encryption(client, self.username, self.password)
         _ = asyncio.run_coroutine_threadsafe(client.connect(), self.event_loop).result()
         self._server_url = server_url
         try:
@@ -696,14 +695,14 @@ class SteeringControlUnit:
             logger.warning("Exception trying load_data_type_definitions(): %s", exc)
         # Get the namespace index for the PLC's Parameter node
         try:
-            self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(
+            self._parameter_ns_idx = asyncio.run_coroutine_threadsafe(
                 client.get_namespace_index(
                     "http://boschrexroth.com/OpcUa/Parameter/Objects/"
                 ),
                 self.event_loop,
             ).result()
         except Exception:
-            self.parameter_ns_idx = None
+            self._parameter_ns_idx = None
             message = (
                 "*** Exception caught while trying to access the namespace "
                 "'http://boschrexroth.com/OpcUa/Parameter/Objects/' for the parameter "
@@ -714,12 +713,12 @@ class SteeringControlUnit:
 
         try:
             if self.namespace != "" and self.endpoint != "":
-                self.ns_idx = asyncio.run_coroutine_threadsafe(
+                self._ns_idx = asyncio.run_coroutine_threadsafe(
                     client.get_namespace_index(self.namespace), self.event_loop
                 ).result()
             else:
                 # Force namespace index for first physical controller
-                self.ns_idx = 2
+                self._ns_idx = 2
         except ValueError as e:
             namespaces = None
             try:
@@ -752,9 +751,9 @@ class SteeringControlUnit:
 
         :param client: The client to disconnect. If None, disconnect self.client.
         """
-        if client is None and self.client is not None:
-            client = self.client
-            self.client = None
+        if client is None and self._client is not None:
+            client = self._client
+            self._client = None
         if client is not None:
             _ = asyncio.run_coroutine_threadsafe(
                 client.disconnect(), self.event_loop
@@ -771,7 +770,7 @@ class SteeringControlUnit:
 
         :return: True if the SCU has a connection, False otherwise.
         """
-        return self.client is not None
+        return self._client is not None
 
     def take_authority(self, user: str | int) -> tuple[ResultCode, str]:
         """
@@ -907,8 +906,8 @@ class SteeringControlUnit:
                 self._opcua_enum_types.update({type_name: getattr(ua, type_name)})
             except AttributeError:
                 try:
-                    enum_node = self.client.get_node(
-                        f"ns={self.ns_idx};s=@{type_name}.EnumValues"
+                    enum_node = self._client.get_node(
+                        f"ns={self._ns_idx};s=@{type_name}.EnumValues"
                     )
                     new_enum = self._create_enum_from_node(type_name, enum_node)
                     self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
@@ -1152,11 +1151,11 @@ class SteeringControlUnit:
         # Create node dicts of the PLC_PRG node's tree
         top_node_name = "PLC_PRG"
         self.plc_prg = asyncio.run_coroutine_threadsafe(
-            self.client.nodes.objects.get_child(
+            self._client.nodes.objects.get_child(
                 [
-                    f"{self.ns_idx}:Logic",
-                    f"{self.ns_idx}:Application",
-                    f"{self.ns_idx}:{top_node_name}",
+                    f"{self._ns_idx}:Logic",
+                    f"{self._ns_idx}:Application",
+                    f"{self._ns_idx}:{top_node_name}",
                 ]
             ),
             self.event_loop,
@@ -1167,15 +1166,15 @@ class SteeringControlUnit:
             self.commands,
             self._plc_prg_nodes_timestamp,
         ) = self._check_cache_and_generate_node_dicts(self.plc_prg, top_node_name)
-        self.nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
+        self._nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
 
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         top_node_name = "Parameter"
-        if not self._gui_app and self.parameter_ns_idx is not None:
+        if not self._gui_app and self._parameter_ns_idx is not None:
             self.parameter = asyncio.run_coroutine_threadsafe(
-                self.client.nodes.objects.get_child(
-                    [f"{self.parameter_ns_idx}:{top_node_name}"]
+                self._client.nodes.objects.get_child(
+                    [f"{self._parameter_ns_idx}:{top_node_name}"]
                 ),
                 self.event_loop,
             ).result()
@@ -1239,7 +1238,7 @@ class SteeringControlUnit:
         commands = {}
         for node_name, tup in cache_dict.items():
             node_id, node_class = tup
-            node = self.client.get_node(node_id)
+            node = self._client.get_node(node_id)
             nodes[node_name] = (node, node_class)
             if node_class == 2:
                 # An attribute. Add it to the attributes dict.
@@ -1469,7 +1468,7 @@ class SteeringControlUnit:
         elif isinstance(attribute, ua.uatypes.NodeId):
             dt_id = attribute
 
-        dt_node = self.client.get_node(dt_id)
+        dt_node = self._client.get_node(dt_id)
         dt_node_info = asyncio.run_coroutine_threadsafe(
             dt_node.read_browse_name(), self.event_loop
         ).result()
@@ -1544,7 +1543,7 @@ class SteeringControlUnit:
         elif isinstance(enum_node, ua.uatypes.NodeId):
             dt_id = enum_node
 
-        dt_node = self.client.get_node(dt_id)
+        dt_node = self._client.get_node(dt_id)
         dt_node_def = asyncio.run_coroutine_threadsafe(
             dt_node.read_data_type_definition(), self.event_loop
         ).result()
@@ -1601,9 +1600,9 @@ class SteeringControlUnit:
             status notification is received, defaults to None.
         """
         if data_queue is None:
-            data_queue = self.subscription_queue
+            data_queue = self._subscription_queue
         subscription_handler = SubscriptionHandler(
-            data_queue, self.nodes_reversed, bad_shutdown_callback
+            data_queue, self._nodes_reversed, bad_shutdown_callback
         )
         if not isinstance(attributes, list):
             attributes = [
@@ -1624,7 +1623,7 @@ class SteeringControlUnit:
                 missing_nodes,
             )
         subscription = asyncio.run_coroutine_threadsafe(
-            self.client.create_subscription(period, subscription_handler),
+            self._client.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
         handles = []
@@ -1642,7 +1641,7 @@ class SteeringControlUnit:
                 )
                 bad_nodes.add(node)
         uid = time.monotonic_ns()
-        self.subscriptions[uid] = {
+        self._subscriptions[uid] = {
             "handles": handles,
             "nodes": nodes - bad_nodes,
             "subscription": subscription,
@@ -1655,15 +1654,15 @@ class SteeringControlUnit:
 
         :param uid: The ID of the user to unsubscribe.
         """
-        subscription = self.subscriptions.pop(uid)
+        subscription = self._subscriptions.pop(uid)
         _ = asyncio.run_coroutine_threadsafe(
             subscription["subscription"].delete(), self.event_loop
         ).result()
 
     def unsubscribe_all(self) -> None:
         """Unsubscribe all subscriptions."""
-        while len(self.subscriptions) > 0:
-            _, subscription = self.subscriptions.popitem()
+        while len(self._subscriptions) > 0:
+            _, subscription = self._subscriptions.popitem()
             _ = asyncio.run_coroutine_threadsafe(
                 subscription["subscription"].delete(), self.event_loop
             ).result()
@@ -1676,8 +1675,8 @@ class SteeringControlUnit:
             queue.
         """
         values = []
-        while not self.subscription_queue.empty():
-            values.append(self.subscription_queue.get(block=False, timeout=0.1))
+        while not self._subscription_queue.empty():
+            values.append(self._subscription_queue.get(block=False, timeout=0.1))
         return values
 
     def load_track_table(
@@ -1758,17 +1757,17 @@ class SteeringControlUnit:
             return ResultCode.NOT_EXECUTED, msg
 
         if mode_int == 1:  # New track table queue
-            if self.stop_track_table_schedule_task_event is not None:
-                self.stop_track_table_schedule_task_event.set()
+            if self._stop_track_table_schedule_task_event is not None:
+                self._stop_track_table_schedule_task_event.set()
 
-            self.track_table_queue = None
-            self.track_table_scheduled_task = None
-            self.track_table = None
+            self._track_table_queue = None
+            self._track_table_scheduled_task = None
+            self._track_table = None
 
-        if self.track_table_queue is None:
-            self.track_table_queue = queue.Queue()
+        if self._track_table_queue is None:
+            self._track_table_queue = queue.Queue()
 
-        self.track_table_queue.put(
+        self._track_table_queue.put(
             {
                 "track_table": track_table,
                 "mode": mode_int,
@@ -1778,26 +1777,26 @@ class SteeringControlUnit:
         # Rely on scheduled track table task to send appended values if it is still
         # running (inadequate space on PLC to load all stored points).
         if (
-            self.track_table_scheduled_task is None
-            or self.track_table_scheduled_task.done()
+            self._track_table_scheduled_task is None
+            or self._track_table_scheduled_task.done()
         ):
             return self._load_track_table_to_plc()
 
-        return (ResultCode.EXECUTING, "Track table queued.")
+        return ResultCode.EXECUTING, "Track table queued."
 
     def _load_track_table_to_plc(self) -> tuple[ResultCode, str]:
         first_load = threading.Event()
         stop_scheduling = threading.Event()
-        self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
+        self._track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
             self._schedule_load_next_points(first_load, stop_scheduling),
             self.event_loop,
         )
-        self.stop_track_table_schedule_task_event = stop_scheduling
+        self._stop_track_table_schedule_task_event = stop_scheduling
         if not first_load.wait(3):
             stop_scheduling.set()
             table_info = ""
-            if self.track_table:
-                table_info = " " + self.track_table.get_details_string()
+            if self._track_table:
+                table_info = " " + self._track_table.get_details_string()
 
             msg = f"Timed out while loading first batch of track table{table_info}."
             logger.error(msg)
@@ -1805,7 +1804,7 @@ class SteeringControlUnit:
 
         return (
             ResultCode.EXECUTING,
-            f"First batch of {len(self.track_table.tai)} track table points loaded "
+            f"First batch of {len(self._track_table.tai)} track table points loaded "
             f"successfully. Continuing with loading...",
         )
 
@@ -1814,8 +1813,8 @@ class SteeringControlUnit:
         first_load: threading.Event,
         stop_scheduling: threading.Event,
     ) -> None:
-        table_kwargs = self.track_table_queue.get(block=False)
-        self.track_table = table_kwargs["track_table"]
+        table_kwargs = self._track_table_queue.get(block=False)
+        self._track_table = table_kwargs["track_table"]
         mode = table_kwargs["mode"]
         result_callback = table_kwargs["result_callback"]
         # One call in case mode is "New"
@@ -1835,8 +1834,8 @@ class SteeringControlUnit:
             ):
                 msg = (
                     f"Failed to load all points to PLC. Reason: {result_msg}. "
-                    f"{self.track_table.remaining_points()} remaining from "
-                    f"{self.track_table.get_details_string()}."
+                    f"{self._track_table.remaining_points()} remaining from "
+                    f"{self._track_table.get_details_string()}."
                 )
                 logger.error(msg)
                 result_callback(result_code, msg)
@@ -1853,7 +1852,7 @@ class SteeringControlUnit:
                     result_callback(
                         result_code,
                         "PLC track table full after loading "
-                        f"{self.track_table.num_loaded_batches} batches. Waiting "
+                        f"{self._track_table.num_loaded_batches} batches. Waiting "
                         f"{sleep_length} seconds for loaded points to be consumed...",
                     )
                 await asyncio.sleep(sleep_length)
@@ -1863,29 +1862,29 @@ class SteeringControlUnit:
                     result_callback(result_code, result_msg)
 
                 try:
-                    table_kwargs = self.track_table_queue.get(block=False)
+                    table_kwargs = self._track_table_queue.get(block=False)
                 except queue.Empty:
                     result_msg = (
                         "Finished loading all queued track table points to the PLC."
                     )
                     break
 
-                self.track_table = table_kwargs["track_table"]
+                self._track_table = table_kwargs["track_table"]
                 result_callback = table_kwargs["result_callback"]
 
             result_code, result_msg = await self._load_next_points()
         logger.debug("Async track table loading: %s", result_msg)
 
     async def _load_next_points(self, mode: int = 0) -> tuple[ResultCode, str]:
-        num, tai, azi, ele = self.track_table.get_next_points(1000)
+        num, tai, azi, ele = self._track_table.get_next_points(1000)
         logger.debug(f"_load_next_points got {num} points")
 
         if num == 0:
             return (
                 ResultCode.ENTIRE_TRACK_TABLE_LOADED,
-                f"Finished loading track table {self.track_table.get_details_string()} "
-                f"to the PLC. {self.track_table.sent_index} points have been sent in "
-                f"{self.track_table.num_loaded_batches} batches.",
+                f"Finished loading track table {self._track_table.get_details_string()}"
+                f" to the PLC. {self._track_table.sent_index} points have been sent in "
+                f"{self._track_table.num_loaded_batches} batches.",
             )
 
         # The TrackLoadTable node accepts arrays of length 1000 only.
@@ -1899,7 +1898,7 @@ class SteeringControlUnit:
             return (
                 ResultCode.NOT_EXECUTED,
                 "Lost authority while loading track table "
-                f"{self.track_table.get_details_string()}.",
+                f"{self._track_table.get_details_string()}.",
             )
 
         # Call TrackLoadTable command and validate result code
@@ -1919,9 +1918,9 @@ class SteeringControlUnit:
             ResultCode.COMMAND_ACTIVATED,
         ):
             # Failed to send points so restore index.
-            self.track_table.sent_index -= num
+            self._track_table.sent_index -= num
         else:
-            self.track_table.num_loaded_batches += 1
+            self._track_table.num_loaded_batches += 1
 
         return result_code, result_msg
 
