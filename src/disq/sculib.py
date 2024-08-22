@@ -7,65 +7,68 @@ calling methods on it, reading or writing attributes.
 How to use SCU
 --------------
 
-Import the library:
+The simplest way to initialise a ``SteeringControlUnit``, is to use the ``SCU()``
+object generator method. It creates an instance, connects to the server, and can also
+take command authority immediately. Provided here are some of the defaults which can be
+overwritten by specifying the named parameter:
 
 .. code-block:: python
 
-    from disq import SCU, Command
-
-Instantiate an SCU object and connect to the server. Provided here are the
-defaults which can be overwritten by specifying the named parameter:
-
-.. code-block:: python
-
-    scu = SCU(host="localhost", port=4840, endpoint="", namespace="", timeout=10.0)
-    # The scu object need to be connected to the server before it can be used
-    scu.connect_and_setup()
-    scu.take_authority("LMC")
-    # Do things
+    from disq import SCU
+    scu = SCU(
+        host="localhost",
+        port=4840,
+        endpoint="",
+        namespace="",
+        timeout=10.0,
+        authority_name="LMC", # Default is None - then take_authority() must be used.
+    )
+    # Do things with the scu instance..
     scu.disconnect_and_cleanup()
 
-Or altenatively SCU can be used as a context manager without calling the setup and
-teardown methods explicitly:
-
+Altenatively the ``SteeringControlUnit`` class can be used directly as a context
+manager without calling the teardown method explicitly:
 
 .. code-block:: python
 
-    with SCU(host="localhost") as scu:
+    from disq import SteeringControlUnit
+    with SteeringControlUnit(host="localhost") as scu:
         scu.take_authority("LMC")
 
-Finally the third and most complete option to initialise and connect an scu object
-is to use the generator method, which will:
+Finally, the third and most complete option to initialise and connect a
+``SteeringControlUnit``, is to use the ``SCU_from_config()`` object generator method,
+which will:
 
-- Read the server address/port/namespace from the configuration file
-- Configure logging
-- Create (and return) the SCU object
-- Connect to the server
-- Take authority if requested
-
+- Read the server address/port/namespace from the configuration file.
+- Configure logging.
+- Create (and return) the ``SteeringControlUnit`` object.
+- Connect to the server.
+- Take authority if requested.
 
 .. code-block:: python
 
-    scu = SCU_from_config('cetc54_simulator', authority_name='LMC')
-    # do things with the scu object...
+    from disq import SCU_from_config
+    scu = SCU_from_config("cetc54_simulator", authority_name="LMC")
+    # Do things with the scu instance..
+    scu.disconnect_and_cleanup()
 
 All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
-`scu.nodes`. The keys are the full node names, the values are the Node objects.
+``scu.nodes``. The keys are the full node names, the values are the Node objects.
 The full names of all nodes can be retrieved with:
 
 .. code-block:: python
 
     scu.get_node_list()
 
-Every value in `scu.nodes` exposes the full OPC UA functionality for a node.
+Every value in ``scu.nodes`` exposes the full OPC UA functionality for a node.
 Note: When accessing nodes directly, it is mandatory to await any calls:
 
 .. code-block:: python
 
-    node = scu.nodes['PLC_PRG']
+    node = scu.nodes["PLC_PRG"]
     node_name = (await node.read_display_name()).Text
 
-The methods that are below the PLC_PRG node's hierarchy can be accessed through
+The command methods that are below the PLC_PRG node's hierarchy can be accessed through
 the commands dictionary:
 
 .. code-block:: python
@@ -74,18 +77,19 @@ the commands dictionary:
 
 When you want to call a command, please check the ICD for the parameters that the
 commands expects. Checking for the correctness of the parameters is not done here
-in sculib but in the PLC's OPC UA server. Once the parameters are in order,
+in the SCU class, but in the PLC's OPC UA server. Once the parameters are in order,
 calling a command is really simple:
 
 .. code-block:: python
 
-    result = scu.commands['COMMAND_NAME'](YOUR_PARAMETERS)
+    result = scu.commands["COMMAND_NAME"](YOUR_PARAMETERS)
 
-You can also use the Command enum, as well as helper method for converting types
+You can also use the ``Command`` enum, as well as the helper method for converting types
 from the OPC UA server to the correct base integer type:
 
 .. code-block:: python
 
+    from disq import Command
     axis = scu.convert_enum_to_int("AxisSelectType", "Az")
     result = scu.commands[Command.ACTIVATE.value](axis)
 
@@ -101,14 +105,14 @@ called in OPC UA "attributes". An attribute's value can easily be read:
 
 .. code-block:: python
 
-    scu.attributes['Azimuth.p_Set'].value
+    scu.attributes["Azimuth.p_Set"].value
 
 If an attribute is writable, then a simple assignment does the trick:
 
 
 .. code-block:: python
 
-    scu.attributes['Azimuth.p_Set'].value = 1.2345
+    scu.attributes["Azimuth.p_Set"].value = 1.2345
 
 In case an attribute is not writeable, the OPC UA server will report an error:
 
