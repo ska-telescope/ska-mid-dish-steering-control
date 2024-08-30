@@ -1,0 +1,36 @@
+[tool.poetry]
+name = "ska-dish-steering-control"
+version = "0.0.1"
+description = "Python module that interfaces with the OPCUA protocol of the dish structure controller"
+authors = ["Your Name <you@example.com>"]
+license = "Copyright 2020 SKA Observatory"
+readme = "README.md"
+
+[[tool.poetry.source]]
+name = 'ska-nexus'
+url = 'https://artefact.skao.int/repository/pypi-internal/simple'
+
+[[tool.poetry.source]]
+name = "PyPI-public"
+url = 'https://pypi.org/simple'
+
+[tool.poetry.dependencies]
+python = "^3.10"
+asyncua = "^1.1.5"
+pyyaml = "^6.0.0"
+platformdirs = "^4.2.2"
+
+[tool.poetry.group.docs.dependencies]
+Sphinx = "^6.2.1"
+docutils = "< 0.20"
+sphinx-tabs = "*"
+typing_extensions = "*"
+sphinx-copybutton = "*"
+ska-ser-sphinx-theme = "^0.1.2"
+sphinx-autodoc-typehints = "^1.23.0"
+sphinxcontrib-plantuml = "^0.30"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
