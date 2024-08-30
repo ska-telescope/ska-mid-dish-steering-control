@@ -511,7 +511,7 @@ class SteeringControlUnit:
                     "Server version (%s) does not conform to semantic versioning",
                     self.server_version,
                 )
-        self.populate_node_dicts(self._gui_app, self._use_nodes_cache)
+        self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
         logger.info("Successfully connected to server and initialised SCU client")
 
@@ -1134,122 +1134,110 @@ class SteeringControlUnit:
         with open(file_path, "w+", encoding="UTF-8") as file:
             json.dump(cached_data, file, indent=4, sort_keys=True)
 
-    def populate_node_dicts(
-        self, plc_only: bool = False, use_cache: bool = False
-    ) -> None:
+    def _populate_node_dicts(self) -> None:
         """
         Populate dictionaries with Node objects.
 
         This method populates dictionaries with Node objects for different categories
         like nodes, attributes, and commands.
 
-        nodes: Contains the entire uasync.Node-tree from and including
+        nodes: Contains the entire asyncua.Node-tree from and including
         the 'PLC_PRG' node.
 
-        attributes: Contains the attributes in the uasync.Node-tree from
+        attributes: Contains the attributes in the asyncua.Node-tree from
         the 'PLC_PRG' node on. The values are callables that return the
         current value.
 
-        commands: Contains all callable methods in the uasync.Node-tree
+        commands: Contains all callable methods in the asyncua.Node-tree
         from the 'PLC_PRG' node on. The values are callables which
         just require the expected parameters.
 
         This method may raise exceptions related to asyncio operations.
         """
+        # Create node dicts of the PLC_PRG node's tree
         top_node_name = "PLC_PRG"
-        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
-        cache = self._load_json_file(cache_file_path) if use_cache else None
-        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
-
-        # Check for existing Nodes IDs cache
-        if cached_nodes:
-            (
-                self.nodes,
-                self.attributes,
-                self.commands,
-            ) = self.generate_node_dicts_from_cache(
-                cached_nodes["node_ids"], top_node_name
-            )
-            self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
-        else:
-            plc_prg = asyncio.run_coroutine_threadsafe(
-                self.client.nodes.objects.get_child(
-                    [
-                        f"{self.ns_idx}:Logic",
-                        f"{self.ns_idx}:Application",
-                        f"{self.ns_idx}:{top_node_name}",
-                    ]
-                ),
-                self.event_loop,
-            ).result()
-            (
-                self.nodes,
-                self.attributes,
-                self.commands,
-            ) = self.generate_node_dicts_from_server(plc_prg, top_node_name)
-            self.plc_prg = plc_prg
-            self._cache_node_ids(cache_file_path, self.nodes)
-            self._plc_prg_nodes_timestamp = datetime.datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
+        self.plc_prg = asyncio.run_coroutine_threadsafe(
+            self.client.nodes.objects.get_child(
+                [
+                    f"{self.ns_idx}:Logic",
+                    f"{self.ns_idx}:Application",
+                    f"{self.ns_idx}:{top_node_name}",
+                ]
+            ),
+            self.event_loop,
+        ).result()
+        (
+            self.nodes,
+            self.attributes,
+            self.commands,
+            self._plc_prg_nodes_timestamp,
+        ) = self._check_cache_and_generate_node_dicts(self.plc_prg, top_node_name)
         self.nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
 
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         top_node_name = "Parameter"
-        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
-        if not plc_only and self.parameter_ns_idx is not None:
-            cache = self._load_json_file(cache_file_path) if use_cache else None
-            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
-            if cached_nodes:
-                (
-                    self.parameter_nodes,
-                    self.parameter_attributes,
-                    self.parameter_commands,
-                ) = self.generate_node_dicts_from_cache(
-                    cached_nodes["node_ids"], top_node_name
-                )
-            else:
-                parameter = asyncio.run_coroutine_threadsafe(
-                    self.client.nodes.objects.get_child(
-                        [f"{self.parameter_ns_idx}:{top_node_name}"]
-                    ),
-                    self.event_loop,
-                ).result()
-                (
-                    self.parameter_nodes,
-                    self.parameter_attributes,
-                    self.parameter_commands,
-                ) = self.generate_node_dicts_from_server(parameter, top_node_name)
-                self.parameter = parameter
-                self._cache_node_ids(cache_file_path, self.parameter_nodes)
+        if not self._gui_app and self.parameter_ns_idx is not None:
+            self.parameter = asyncio.run_coroutine_threadsafe(
+                self.client.nodes.objects.get_child(
+                    [f"{self.parameter_ns_idx}:{top_node_name}"]
+                ),
+                self.event_loop,
+            ).result()
+            (
+                self.parameter_nodes,
+                self.parameter_attributes,
+                self.parameter_commands,
+                _,
+            ) = self._check_cache_and_generate_node_dicts(self.parameter, top_node_name)
 
         # And now create dicts for all nodes of the OPC UA server. This is
         # intended to serve as the API for the Dish LMC.
         top_node_name = "Root"
-        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
-        if not plc_only:
-            cache = self._load_json_file(cache_file_path) if use_cache else None
-            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
-            if cached_nodes:
-                (
-                    self.server_nodes,
-                    self.server_attributes,
-                    self.server_commands,
-                ) = self.generate_node_dicts_from_cache(
-                    cached_nodes["node_ids"], top_node_name
-                )
-            else:
-                server = self.client.get_root_node()
-                (
-                    self.server_nodes,
-                    self.server_attributes,
-                    self.server_commands,
-                ) = self.generate_node_dicts_from_server(server, top_node_name)
-                self.server = server
-                self._cache_node_ids(cache_file_path, self.server_nodes)
+        self.server = self.client.get_root_node()
+        if not self._gui_app:
+            (
+                self.server_nodes,
+                self.server_attributes,
+                self.server_commands,
+                _,
+            ) = self._check_cache_and_generate_node_dicts(self.server, top_node_name)
 
-    def generate_node_dicts_from_cache(
+    def _check_cache_and_generate_node_dicts(
+        self,
+        top_level_node: Node,
+        top_level_node_name: str,
+    ) -> tuple[NodeDict, AttrDict, CmdDict, str]:
+        """
+        Check for an existing nodes cache to use and generate the dicts accordingly.
+
+        If the ``use_nodes_cache`` var is set, check if there is an existing cache file
+        matching the top level node name, load the JSON and generate the node dicts from
+        it. Otherwise generate the node dicts by scanning the node's tree on the server.
+
+        :param top_level_node: The top-level node for which to generate dictionaries.
+        :param top_level_node_name: Name of the top-level node.
+        :return: A tuple containing dictionaries for nodes, attributes, and commands, as
+            well as a string timestamp of when the dicts were generated.
+        """
+        cache_file_path = USER_CACHE_DIR / f"{top_level_node_name}.json"
+        cache = self._load_json_file(cache_file_path) if self._use_nodes_cache else None
+        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+        # Check for existing Node IDs cache
+        if cached_nodes:
+            node_dicts = self._generate_node_dicts_from_cache(
+                cached_nodes["node_ids"], top_level_node_name
+            )
+            timestamp = cached_nodes["timestamp"]
+        else:
+            node_dicts = self.generate_node_dicts_from_server(
+                top_level_node, top_level_node_name
+            )
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._cache_node_ids(cache_file_path, node_dicts[0])
+        return *node_dicts, timestamp
+
+    def _generate_node_dicts_from_cache(
         self, cache_dict: dict[str, tuple[str, int]], top_level_node_name: str
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
