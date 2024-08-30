@@ -1,3 +1,5 @@
+# flake8: noqa:D401
+# pylint: disable=logging-fstring-interpolation,implicit-str-concat,fixme
 """
 Steering Control Unit (SCU) for a SKA-Mid Dish Structure Controller OPC UA server.
 

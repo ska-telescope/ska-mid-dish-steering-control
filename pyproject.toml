@@ -20,6 +20,20 @@ asyncua = "^1.1.5"
 pyyaml = "^6.0.0"
 platformdirs = "^4.2.2"
 
+[tool.poetry.group.dev.dependencies]
+black = "^23.3.0"
+flake8 = "^6.0.0"
+isort = "^5.12.0"
+pylint = "^3.2.6"
+pylint-junit = "^0.3.2"
+pytest = "^7.3.1"
+pytest-cov = "^4.1.0"
+pytest-forked = "^1.4.0"
+pytest-json-report = "^1.4.1"
+flake8-docstrings = "^1.7.0"
+flake8-rst-docstrings = "^0.3.0"
+flake8-pyproject = "^1.2.3"
+
 [tool.poetry.group.docs.dependencies]
 Sphinx = "^6.2.1"
 docutils = "< 0.20"

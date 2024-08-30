@@ -1,3 +1,4 @@
+# pylint: disable-all
 """Common DiSQ enumerated types and other constants used in the package."""
 
 from enum import Enum, IntEnum

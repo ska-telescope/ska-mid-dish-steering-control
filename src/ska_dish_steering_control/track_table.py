@@ -1,3 +1,5 @@
+# flake8: noqa:E203
+# pylint: disable=invalid-name
 """Track table for Steering Control Unit (SCU) module."""
 
 import logging
