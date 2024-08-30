@@ -462,11 +462,6 @@ class SteeringControlUnit:
         self.parameter_ns_idx: int
         self.parameter_nodes: NodeDict
         self.parameter_attributes: AttrDict
-        self.parameter_commands: CmdDict
-        self.server: Node
-        self.server_nodes: NodeDict
-        self.server_attributes: AttrDict
-        self.server_commands: CmdDict
         self.track_table_queue: queue.Queue | None = None
         self.stop_track_table_schedule_task_event: threading.Event | None = None
         self.track_table_scheduled_task: Future | None = None
@@ -1187,21 +1182,9 @@ class SteeringControlUnit:
             (
                 self.parameter_nodes,
                 self.parameter_attributes,
-                self.parameter_commands,
-                _,
+                _,  # Parameter tree has no commands, so it is just an empty dict
+                _,  # timestamp
             ) = self._check_cache_and_generate_node_dicts(self.parameter, top_node_name)
-
-        # And now create dicts for all nodes of the OPC UA server. This is
-        # intended to serve as the API for the Dish LMC.
-        top_node_name = "Root"
-        self.server = self.client.get_root_node()
-        if not self._gui_app:
-            (
-                self.server_nodes,
-                self.server_attributes,
-                self.server_commands,
-                _,
-            ) = self._check_cache_and_generate_node_dicts(self.server, top_node_name)
 
     def _check_cache_and_generate_node_dicts(
         self,
@@ -1283,8 +1266,7 @@ class SteeringControlUnit:
         """
         Generate dicts for nodes, attributes, and commands for a given top-level node.
 
-        This function is part of a class and takes the top-level node and an optional
-        name for it as input. It then generates dictionaries for nodes, attributes, and
+        This function generates dictionaries for nodes, attributes, and
         commands based on the structure of the top-level node and returns a tuple
         containing these dictionaries.
 
@@ -1298,7 +1280,7 @@ class SteeringControlUnit:
             "Generating dicts of '%s' node's tree from server. It may take a while...",
             top_level_node_name,
         )
-        nodes, attributes, commands = self.get_sub_nodes(top_level_node)
+        nodes, attributes, commands = self._get_sub_nodes(top_level_node)
         nodes.update({top_level_node_name: (top_level_node, 1)})
         return (
             nodes,
@@ -1351,7 +1333,7 @@ class SteeringControlUnit:
         return (node_name, ancestors)
 
     # pylint: disable=unused-argument
-    def get_sub_nodes(
+    def _get_sub_nodes(
         self,
         node: Node,
         node_name_separator: str = ".",
@@ -1391,7 +1373,7 @@ class SteeringControlUnit:
             ).result()
             child_nodes: NodeDict = {}
             for child in children:
-                child_nodes, child_attributes, child_commands = self.get_sub_nodes(
+                child_nodes, child_attributes, child_commands = self._get_sub_nodes(
                     child, parent_names=ancestors
                 )
                 nodes.update(child_nodes)
@@ -1449,14 +1431,6 @@ class SteeringControlUnit:
         """
         return self.__get_node_list(self.parameter_nodes)
 
-    def get_parameter_command_list(self) -> list[str]:
-        """
-        Get a list of parameter commands.
-
-        :return: A list of parameter commands.
-        """
-        return self.__get_node_list(self.parameter_commands)
-
     def get_parameter_attribute_list(self) -> list[str]:
         """
         Return a list of parameter attributes.
@@ -1464,30 +1438,6 @@ class SteeringControlUnit:
         :return: A list of parameter attribute names.
         """
         return self.__get_node_list(self.parameter_attributes)
-
-    def get_server_node_list(self) -> list[str]:
-        """
-        Get the list of server nodes.
-
-        :return: A list of server node names.
-        """
-        return self.__get_node_list(self.server_nodes)
-
-    def get_server_command_list(self) -> list[str]:
-        """
-        Get the list of server commands.
-
-        :return: A list of server command strings.
-        """
-        return self.__get_node_list(self.server_commands)
-
-    def get_server_attribute_list(self) -> list[str]:
-        """
-        Get a list of server attributes.
-
-        :return: A list of server attributes.
-        """
-        return self.__get_node_list(self.server_attributes)
 
     def __get_node_list(self, nodes: dict) -> list[str]:
         """
