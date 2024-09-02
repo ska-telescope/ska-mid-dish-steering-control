@@ -213,7 +213,12 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
 
     :param e: The exception that was caught.
     """
-    logger.exception("*** Exception caught: %s [context: %s]", e, msg)
+    try:
+        # pylint: disable:no-member
+        e.add_note(msg)  # type: ignore
+        logger.exception("*** Exception caught: %s", e)
+    except AttributeError:
+        logger.exception("*** Exception caught: %s [context: %s]", e, msg)
 
 
 def create_rw_attribute(
@@ -482,7 +487,11 @@ class SteeringControlUnit:
                 "check the connection parameters that were "
                 "passed to instantiate the sculib!"
             )
-            logger.error("%s - %s", msg, e)
+            try:
+                # pylint: disable:no-member
+                e.add_note(msg)  # type: ignore
+            except AttributeError:
+                logger.exception(msg)
             raise e
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
@@ -734,8 +743,11 @@ class SteeringControlUnit:
                 " with the normal operation but list the available namespaces here for "
                 f"future reference:\n{namespaces}"
             )
-            logger.error(message)
-            # e.add_note(message)
+            try:
+                # pylint: disable:no-member
+                e.add_note(message)  # type: ignore
+            except AttributeError:
+                logger.exception(message)
             raise e
         return client
 
