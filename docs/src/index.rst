@@ -1,4 +1,3 @@
-"""
 Steering Control Unit (SCU) for a SKA-Mid Dish Structure Controller OPC UA server.
 
 This module contains an OPC UA client class that simplifies connecting to a server and
