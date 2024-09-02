@@ -213,7 +213,12 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
 
     :param e: The exception that was caught.
     """
-    logger.exception("*** Exception caught: %s [context: %s]", e, msg)
+    try:
+        # pylint: disable:no-member
+        e.add_note(msg)  # type: ignore
+        logger.exception("*** Exception caught: %s", e)
+    except AttributeError:
+        logger.exception("*** Exception caught: %s [context: %s]", e, msg)
 
 
 def create_rw_attribute(
