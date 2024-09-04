@@ -408,6 +408,9 @@ class SteeringControlUnit:
         Default 'DiSQ.sculib v{PACKAGE_VERSION}'
     """
 
+    # ------------------
+    # Setup and teardown
+    # ------------------
     # pylint: disable=too-many-arguments,too-many-locals
     def __init__(
         self,
@@ -451,17 +454,17 @@ class SteeringControlUnit:
         self._session_id: ua.UInt16 | None = None
         self._server_url: str
         self._server_str_id: str
-        self.plc_prg: Node
+        self._plc_prg: Node
         self._ns_idx: int
-        self.nodes: NodeDict
+        self._nodes: NodeDict
         self._nodes_reversed: dict[tuple[Node, int], str]
-        self.attributes: AttrDict
-        self.commands: CmdDict
+        self._attributes: AttrDict
+        self._commands: CmdDict
         self._plc_prg_nodes_timestamp: str
-        self.parameter: Node
+        self._parameter: Node
         self._parameter_ns_idx: int
-        self.parameter_nodes: NodeDict
-        self.parameter_attributes: AttrDict
+        self._parameter_nodes: NodeDict
+        self._parameter_attributes: AttrDict
         self._track_table_queue: queue.Queue | None = None
         self._stop_track_table_schedule_task_event: threading.Event | None = None
         self._track_table_scheduled_task: Future | None = None
@@ -544,46 +547,6 @@ class SteeringControlUnit:
         """Disconnect from server and clean up client resources."""
         self.disconnect_and_cleanup()
 
-    @cached_property
-    def server_version(self) -> str | None:
-        """
-        The software/firmware version of the server that SCU is connected to.
-
-        :return: The version of the server, or None if the server version info could
-            not be read successfully.
-        """
-        try:
-            version_node = asyncio.run_coroutine_threadsafe(
-                self._client.nodes.objects.get_child(
-                    [
-                        f"{self._ns_idx}:Logic",
-                        f"{self._ns_idx}:Application",
-                        f"{self._ns_idx}:PLC_PRG",
-                        f"{self._ns_idx}:Management",
-                        f"{self._ns_idx}:NamePlate",
-                        f"{self._ns_idx}:DscSoftwareVersion",
-                    ]
-                ),
-                self.event_loop,
-            ).result()
-            server_version: str = asyncio.run_coroutine_threadsafe(
-                version_node.get_value(), self.event_loop
-            ).result()
-        except Exception as e:
-            msg = "Failed to read value of DscSoftwareVersion attribute."
-            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
-            server_version = None
-        return server_version
-
-    @property
-    def plc_prg_nodes_timestamp(self) -> str:
-        """
-        Generation timestamp of the PLC_PRG Node tree.
-
-        :return: timestamp in 'yyyy-mm-dd hh:mm:ss' string format.
-        """
-        return self._plc_prg_nodes_timestamp
-
     def _run_event_loop(
         self,
         event_loop: asyncio.AbstractEventLoop,
@@ -622,6 +585,9 @@ class SteeringControlUnit:
         self._event_loop_thread.start()
         thread_started_event.wait(5.0)  # Wait for the event loop thread to start
 
+    # --------------------------
+    # Client connection handling
+    # --------------------------
     def _set_up_encryption(self, client: Client, user: str, pw: str) -> None:
         """
         Set up encryption for the client with the given user credentials.
@@ -772,6 +738,141 @@ class SteeringControlUnit:
         """
         return self._client is not None
 
+    # ----------------
+    # Class properties
+    # ----------------
+    @cached_property
+    def server_version(self) -> str | None:
+        """
+        The software/firmware version of the server that SCU is connected to.
+
+        Returns None if the server version info could not be read successfully.
+        """
+        try:
+            version_node = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [
+                        f"{self._ns_idx}:Logic",
+                        f"{self._ns_idx}:Application",
+                        f"{self._ns_idx}:PLC_PRG",
+                        f"{self._ns_idx}:Management",
+                        f"{self._ns_idx}:NamePlate",
+                        f"{self._ns_idx}:DscSoftwareVersion",
+                    ]
+                ),
+                self.event_loop,
+            ).result()
+            server_version: str = asyncio.run_coroutine_threadsafe(
+                version_node.get_value(), self.event_loop
+            ).result()
+        except Exception as e:
+            msg = "Failed to read value of DscSoftwareVersion attribute."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            server_version = None
+        return server_version
+
+    @property
+    def nodes(self) -> NodeDict:
+        """Dictionary of the 'PLC_PRG' node's entire tree of `asyncua.Node` objects."""
+        return self._nodes
+
+    @property
+    def attributes(self) -> AttrDict:
+        """
+        Dictionary containing the attributes in the 'PLC_PRG' node tree.
+
+        The values are callables that return the current value.
+        """
+        return self._attributes
+
+    @property
+    def commands(self) -> CmdDict:
+        """
+        Dictionary containing command methods in the 'PLC_PRG' node tree.
+
+        The values are callables which require the expected parameters.
+        """
+        return self._commands
+
+    @property
+    def plc_prg_nodes_timestamp(self) -> str:
+        """
+        Generation timestamp of the 'PLC_PRG' nodes.
+
+        The timestamp is in 'yyyy-mm-dd hh:mm:ss' string format.
+        """
+        return self._plc_prg_nodes_timestamp
+
+    @property
+    def parameter_nodes(self) -> NodeDict:
+        """Dictionary containing the parameter nodes of the PLC program."""
+        return self._parameter_nodes
+
+    @property
+    def parameter_attributes(self) -> AttrDict:
+        """
+        Dictionary containing the attributes of the parameter nodes in the PLC program.
+
+        The values are callables that return the current value.
+        """
+        return self._parameter_attributes
+
+    @property
+    def opcua_enum_types(self) -> dict[str, Type[Enum]]:
+        """
+        Dictionary mapping OPC-UA enum type names to their corresponding value.
+
+        The value being an enumerated type.
+        """
+        return self._opcua_enum_types
+
+    def _validate_enum_types(self) -> None:
+        """
+        Validate the DSC's OPC-UA enum types.
+
+        Check if the expected OPC-UA enum types are defined after connecting to the
+        server, and if not, try to manually retrieve them by their node ID and set the
+        corresponding ua attributes. Add all found enum types and their values to the
+        'opcua_enum_types' dictionary property.
+        """
+        missing_types = []
+        expected_types = [
+            "AxisSelectType",
+            "AxisStateType",
+            "BandType",
+            "CmdResponseType",
+            "DscCmdAuthorityType",
+            "DscStateType",
+            "DscTimeSyncSourceType",
+            "InterpolType",
+            "LoadModeType",
+            "SafetyStateType",
+            "StowPinStatusType",
+            "TiltOnType",
+        ]
+        for type_name in expected_types:
+            try:
+                self._opcua_enum_types.update({type_name: getattr(ua, type_name)})
+            except AttributeError:
+                try:
+                    enum_node = self._client.get_node(
+                        f"ns={self._ns_idx};s=@{type_name}.EnumValues"
+                    )
+                    new_enum = self._create_enum_from_node(type_name, enum_node)
+                    self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
+                    setattr(ua, type_name, new_enum)
+                except (RuntimeError, ValueError):
+                    missing_types.append(type_name)
+        if missing_types:
+            logger.warning(
+                "OPC-UA server does not implement the following Enumerated types "
+                "as expected: %s",
+                str(missing_types),
+            )
+
+    # ----------------------
+    # Command user authority
+    # ----------------------
     def take_authority(self, user: str | int) -> tuple[ResultCode, str]:
         """
         Take command authority.
@@ -830,6 +931,9 @@ class SteeringControlUnit:
             logger.info(msg)
         return code, msg
 
+    # ---------------
+    # General methods
+    # ---------------
     def convert_enum_to_int(self, enum_type: str, name: str) -> ua.UInt16 | None:
         """
         Convert the name (string) of the given enumeration type to an integer value.
@@ -866,60 +970,6 @@ class SteeringControlUnit:
         except ValueError:
             logger.error("%s is not a valid '%s' enum value!", value, enum_type)
             return value
-
-    @property
-    def opcua_enum_types(self) -> dict[str, Type[Enum]]:
-        """
-        Retrieve a dictionary of OPC-UA enum types.
-
-        :return: A dictionary mapping OPC-UA enum type names to their corresponding
-            value. The value being an enumerated type.
-        """
-        return self._opcua_enum_types
-
-    def _validate_enum_types(self) -> None:
-        """
-        Validate the DSC's OPC-UA enum types.
-
-        Check if the expected OPC-UA enum types are defined after connecting to the
-        server, and if not, try to manually retrieve them by their node ID and set the
-        corresponding ua attributes. Add all found enum types and their values to the
-        'opcua_enum_types' dictionary property.
-        """
-        missing_types = []
-        expected_types = [
-            "AxisSelectType",
-            "AxisStateType",
-            "BandType",
-            "CmdResponseType",
-            "DscCmdAuthorityType",
-            "DscStateType",
-            "DscTimeSyncSourceType",
-            "InterpolType",
-            "LoadModeType",
-            "SafetyStateType",
-            "StowPinStatusType",
-            "TiltOnType",
-        ]
-        for type_name in expected_types:
-            try:
-                self._opcua_enum_types.update({type_name: getattr(ua, type_name)})
-            except AttributeError:
-                try:
-                    enum_node = self._client.get_node(
-                        f"ns={self._ns_idx};s=@{type_name}.EnumValues"
-                    )
-                    new_enum = self._create_enum_from_node(type_name, enum_node)
-                    self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
-                    setattr(ua, type_name, new_enum)
-                except (RuntimeError, ValueError):
-                    missing_types.append(type_name)
-        if missing_types:
-            logger.warning(
-                "OPC-UA server does not implement the following Enumerated types "
-                "as expected: %s",
-                str(missing_types),
-            )
 
     def _create_enum_from_node(self, name: str, node: Node) -> Enum:
         enum_values = asyncio.run_coroutine_threadsafe(
@@ -1082,6 +1132,9 @@ class SteeringControlUnit:
             result_msg = result_enum.name
         return result_enum, result_msg
 
+    # -----------------------------
+    # Node dictionaries and caching
+    # -----------------------------
     def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
         """
         Load JSON file.
@@ -1150,7 +1203,7 @@ class SteeringControlUnit:
         """
         # Create node dicts of the PLC_PRG node's tree
         top_node_name = "PLC_PRG"
-        self.plc_prg = asyncio.run_coroutine_threadsafe(
+        self._plc_prg = asyncio.run_coroutine_threadsafe(
             self._client.nodes.objects.get_child(
                 [
                     f"{self._ns_idx}:Logic",
@@ -1161,29 +1214,31 @@ class SteeringControlUnit:
             self.event_loop,
         ).result()
         (
-            self.nodes,
-            self.attributes,
-            self.commands,
+            self._nodes,
+            self._attributes,
+            self._commands,
             self._plc_prg_nodes_timestamp,
-        ) = self._check_cache_and_generate_node_dicts(self.plc_prg, top_node_name)
+        ) = self._check_cache_and_generate_node_dicts(self._plc_prg, top_node_name)
         self._nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
 
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         top_node_name = "Parameter"
         if not self._gui_app and self._parameter_ns_idx is not None:
-            self.parameter = asyncio.run_coroutine_threadsafe(
+            self._parameter = asyncio.run_coroutine_threadsafe(
                 self._client.nodes.objects.get_child(
                     [f"{self._parameter_ns_idx}:{top_node_name}"]
                 ),
                 self.event_loop,
             ).result()
             (
-                self.parameter_nodes,
-                self.parameter_attributes,
+                self._parameter_nodes,
+                self._parameter_attributes,
                 _,  # Parameter tree has no commands, so it is just an empty dict
                 _,  # timestamp
-            ) = self._check_cache_and_generate_node_dicts(self.parameter, top_node_name)
+            ) = self._check_cache_and_generate_node_dicts(
+                self._parameter, top_node_name
+            )
 
     def _check_cache_and_generate_node_dicts(
         self,
@@ -1398,6 +1453,9 @@ class SteeringControlUnit:
             )
         return nodes, attributes, commands
 
+    # --------------
+    # Getter methods
+    # --------------
     def get_node_list(self) -> list[str]:
         """
         Get a list of node names.
@@ -1579,6 +1637,9 @@ class SteeringControlUnit:
         result = list(zip(node_list, descriptions))
         return result
 
+    # --------------------
+    # OPC-UA subscriptions
+    # --------------------
     # pylint: disable=dangerous-default-value
     def subscribe(
         self,
@@ -1679,6 +1740,9 @@ class SteeringControlUnit:
             values.append(self._subscription_queue.get(block=False, timeout=0.1))
         return values
 
+    # -------------
+    # Dish tracking
+    # -------------
     def load_track_table(
         self,
         mode: str | int = 0,
@@ -1954,7 +2018,9 @@ class SteeringControlUnit:
         )
         return code, msg
 
-    # commands to DMC state - dish management controller
+    # ---------------------------
+    # Convenience command methods
+    # ---------------------------
     def interlock_acknowledge_dmc(self) -> CmdReturn:
         """
         Acknowledge the interlock status for the DMC.
@@ -2032,7 +2098,6 @@ class SteeringControlUnit:
             az_angle, el_angle, az_velocity, el_velocity
         )
 
-    # commands to ACU
     def stow(self) -> CmdReturn:
         """
         Stow the dish.
