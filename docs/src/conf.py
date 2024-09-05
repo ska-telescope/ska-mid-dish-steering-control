@@ -10,58 +10,26 @@
 import os
 import sys
 
-# WORKAROUND: https://github.com/sphinx-doc/sphinx/issues/9243
-import sphinx.builders.html
-import sphinx.builders.latex
-import sphinx.builders.texinfo
-import sphinx.builders.text
-import sphinx.ext.autodoc
-
-# This is an elaborate hack to insert write property into _all_
-# mock decorators. It is needed for getting @attribute to build
-# in mocked out tango.server
-# see https://github.com/sphinx-doc/sphinx/issues/6709
-from sphinx.ext.autodoc.mock import _MockObject
-
-def call_mock(self, *args, **kw):
-    from types import FunctionType, MethodType
-
-    if args and type(args[0]) in [type, FunctionType, MethodType]:
-        # Appears to be a decorator, pass through unchanged
-        args[0].write = lambda x: x
-        return args[0]
-    return self
-
-_MockObject.__call__ = call_mock
-# hack end
-
-# If extensions (or modules to document with autodoc) are in another directory,
-# add these directories to sys.path here. If the directory is relative to the
-# documentation root, use os.path.abspath to make it absolute, like shown here.
 sys.path.insert(0, os.path.abspath("../../src"))
-
-# pylint: disable=invalid-name
-autodoc_mock_imports = [
-    "asyncua",
-]
-
-autodoc_default_options = {
-    "members": True,
-    "special-members": "__init__",
-}
-
+sys.path.insert(0, os.path.abspath("../../src/ska_mid_dish_steering_control"))
 
 # -- Project information -----------------------------------------------------
 
-project = "SKA Mid Dish Steering Control Unit"
-copyright = "2023, KAROO Team"
-author = "KAROO Team"
+project = "SKA-Mid Dish Structure Steering Control Unit"
+copyright = "2024, SKAO"
+author = "Team Wombat"
 
 # The full version, including alpha/beta/rc tags
 release = "0.0.1"
 
 
 # -- General configuration ---------------------------------------------------
+
+autodoc_typehints_format = "short"
+
+autodoc_default_options = {
+    "member-order": "bysource",
+}
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
@@ -70,18 +38,18 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.coverage",
     "sphinx.ext.doctest",
-    "sphinx.ext.todo",
-    "sphinx_tabs.tabs",
-    "sphinx_copybutton",
-    "sphinx.ext.viewcode",
+    "sphinx.ext.intersphinx",
     "sphinx_autodoc_typehints",
     "sphinxcontrib.plantuml",
 ]
-autoclass_content = "class"
 plantuml_syntax_error_image = True
 
+# This will use the type annotations from your function signature to populate the
+# type-related fields in your documentation.
+autodoc_typehints = "description"
+
 # Add any paths that contain templates here, relative to this directory.
-templates_path = ['_templates']
+templates_path = ["_templates"]
 
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
@@ -105,8 +73,10 @@ pygments_style = "sphinx"
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = True
 
-if os.environ.get('LOCAL_BUILD') == 'True':
-    plantuml = 'java -jar %s' % os.path.join(os.path.dirname(__file__), "utils", "plantuml.jar")
+if os.environ.get("LOCAL_BUILD") == "True":
+    plantuml = "java -jar %s" % os.path.join(
+        os.path.dirname(__file__), "utils", "plantuml.jar"
+    )
 
 # -- Options for HTML output -------------------------------------------------
 
@@ -120,3 +90,12 @@ html_context = {}
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 # html_static_path = []
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3.10/", None),
+    "asyncua": ("https://opcua-asyncio.readthedocs.io/en/latest/", None),
+}
+
+nitpicky = True
+
+nitpick_ignore = [("py:class", "asyncio.events.AbstractEventLoop")]
