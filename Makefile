@@ -1,43 +1,33 @@
-SHELL=/bin/bash
-.SHELLFLAGS=-o pipefail -c
+#
+# Project makefile for SKA-Mid Dish Structure Steering Control Unit project. 
+#
+# Distributed under the terms of the BSD 3-clause new license.
+# See LICENSE for more info.
 
-NAME=ska-mid-dish-steering-control
-VERSION=$(shell grep -e "^version = s*" pyproject.toml | cut -d = -f 2 | xargs)
-
--include .make/base.mk
+include .make/base.mk
 
 ########################################################################
 # DOCS
 ########################################################################
--include .make/docs.mk
-
+include .make/docs.mk
 
 ########################################################################
 # PYTHON
 ########################################################################
-PYTHON_LINE_LENGTH = 99
-PYTHON_SWITCHES_FOR_BLACK = --line-length 99
-PYTHON_SWITCHES_FOR_ISORT = -w 99
-PYTHON_SWITCHES_FOR_FLAKE8 = --max-line-length=99
-PYTHON_VARS_BEFORE_PYTEST ?= PYTHONPATH=.:./src
-PYTHON_VARS_AFTER_PYTEST ?= -m '$(MARK)' --forked --json-report --json-report-file=build/report.json --junitxml=build/report.xml
+include .make/python.mk
 
-# Set the specific environment variables required for pytest
-python-test: MARK = unit
+PYTHON_LINE_LENGTH = 88
 
--include .make/python.mk
+python-post-lint:
+	$(PYTHON_RUNNER) mypy src/ tests/
+
 
 ########################################################################
 # OCI, HELM, K8S
 ########################################################################
-OCI_TAG = $(VERSION)-dev.c$(CI_COMMIT_SHORT_SHA)
-
-CI_REGISTRY ?= registry.gitlab.com
-
--include .make/oci.mk
+include .make/oci.mk
 
 ########################################################################
 # PRIVATE OVERRIDES
 ########################################################################
-
 -include PrivateRules.mak

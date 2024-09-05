@@ -1,0 +1,20 @@
+[MAIN]
+ignore=
+    ds_opcua_server_mock.py,
+
+extension-pkg-allow-list=PyQt6
+
+[FORMAT]
+max-line-length = 88
+
+[MESSAGES CONTROL]
+disable=
+    import-error,       # issue with PyQt6 import in CI environment
+    no-name-in-module,  # issue with PyQt6 import in CI environment
+    duplicate-code,
+    fixme,
+    logging-fstring-interpolation
+
+[SIMILARITIES]
+min-similarity-lines=7
+ignore-imports=yes

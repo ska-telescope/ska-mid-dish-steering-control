@@ -1,0 +1,17 @@
+{
+    "recommendations": [
+        "ms-python.pylint",
+        "ms-python.mypy-type-checker",
+        "ms-python.black-formatter",
+        "ms-python.flake8",
+        "ms-python.isort",
+        "ms-python.python",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "ryanluker.vscode-coverage-gutters",
+        "lextudio.restructuredtext",
+        "trond-snekvik.simple-rst",
+        "mhutchie.git-graph",
+        "njpwerner.autodocstring"
+    ]
+}
