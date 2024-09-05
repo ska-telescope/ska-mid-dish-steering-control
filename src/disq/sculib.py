@@ -149,7 +149,7 @@ from disq import configuration
 from disq.constants import PACKAGE_VERSION, CmdReturn, Command, ResultCode
 from disq.track_table import TrackTable
 
-logger = logging.getLogger("sculib")
+logger = logging.getLogger("ska-mid-ds-scu")
 
 USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
@@ -353,7 +353,7 @@ class SteeringControlUnit:
     :param use_nodes_cache: Whether to use any existing caches of node IDs.
         Default is False.
     :param app_name: application name for OPC UA client description.
-        Default 'DiSQ.sculib v{PACKAGE_VERSION}'
+        Default 'SKA-Mid-DS-SCU v{PACKAGE_VERSION}'
     """
 
     # ------------------
@@ -372,7 +372,7 @@ class SteeringControlUnit:
         eventloop: asyncio.AbstractEventLoop | None = None,
         gui_app: bool = False,
         use_nodes_cache: bool = False,
-        app_name: str = f"DiSQ.sculib v{PACKAGE_VERSION}",
+        app_name: str = f"SKA-Mid-DS-SCU v{PACKAGE_VERSION}",
     ) -> None:
         """Initialise SCU with the provided parameters."""
         logger.info("Initialising SCU")
@@ -449,7 +449,7 @@ class SteeringControlUnit:
                     and Version(self.server_version) < COMPATIBLE_CETC_SIM_VER
                 ):
                     raise RuntimeError(
-                        f"DiSQ-SCU not compatible with v{self.server_version} of CETC "
+                        f"SCU not compatible with v{self.server_version} of CETC "
                         f"simulator, only v{COMPATIBLE_CETC_SIM_VER} and up"
                     )
             except InvalidVersion:
@@ -835,7 +835,7 @@ class SteeringControlUnit:
         )
         if user_int == 2:  # HHP
             code = ResultCode.NOT_EXECUTED
-            msg = "DiSQ-SCU cannot take authority as HHP user"
+            msg = "SCU cannot take authority as HHP user"
             logger.info("TakeAuth command not executed, as %s", msg)
         elif self._user is None or (self._user is not None and self._user < user_int):
             code, msg, vals = self.commands[Command.TAKE_AUTH.value](
@@ -849,7 +849,7 @@ class SteeringControlUnit:
         else:
             user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
             code = ResultCode.NOT_EXECUTED
-            msg = f"DiSQ-SCU already has command authority with user {user_str}"
+            msg = f"SCU already has command authority with user {user_str}"
             logger.info("TakeAuth command not executed, as %s", msg)
         return code, msg
 
@@ -868,14 +868,14 @@ class SteeringControlUnit:
             elif code in [ResultCode.NO_CMD_AUTH, ResultCode.COMMAND_FAILED]:
                 user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                 logger.info(
-                    "DiSQ-SCU has already lost command authority as user '%s' to "
+                    "SCU has already lost command authority as user '%s' to "
                     "another client.",
                     user,
                 )
                 self._user, self._session_id = None, None
         else:
             code = ResultCode.NOT_EXECUTED
-            msg = "DiSQ-SCU has no command authority to release."
+            msg = "SCU has no command authority to release."
             logger.info(msg)
         return code, msg
 
@@ -997,7 +997,7 @@ class SteeringControlUnit:
             if need_authority and self._session_id is None:
                 return (
                     ResultCode.NOT_EXECUTED,
-                    "DiSQ-SCU has no command authority to execute requested command",
+                    "SCU has no command authority to execute requested command",
                     result_output,
                 )
             try:
@@ -1022,14 +1022,14 @@ class SteeringControlUnit:
                 # Handle specific result codes
                 if result_code == ResultCode.UNKNOWN:
                     logger.warning(
-                        "DiSQ-SCU has received an unknown result code: %s - "
-                        "Check server's CmdResponseType and DiSQ ResultCode enum!",
+                        "SCU has received an unknown result code: %s - "
+                        "Check server's CmdResponseType and ResultCode enum!",
                         result_code_int,
                     )
                 elif result_code == ResultCode.NO_CMD_AUTH:
                     user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                     logger.info(
-                        "DiSQ-SCU has lost command authority as user '%s' to "
+                        "SCU has lost command authority as user '%s' to "
                         "another client.",
                         user,
                     )
