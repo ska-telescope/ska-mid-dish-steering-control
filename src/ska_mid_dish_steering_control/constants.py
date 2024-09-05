@@ -2,9 +2,15 @@
 
 from enum import Enum, IntEnum
 from importlib import metadata
+from pathlib import Path
 from typing import Final
 
+from platformdirs import user_cache_dir
+
 # Constants
+USER_CACHE_DIR: Final = Path(
+    user_cache_dir(appauthor="SKAO", appname="ska-mid-dish-steering-control")
+)
 PACKAGE_VERSION: Final = metadata.version("ska-mid-dish-steering-control")
 SUBSCRIPTION_RATE_MS: Final = 100
 

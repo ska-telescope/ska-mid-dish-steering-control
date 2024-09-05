@@ -3,7 +3,7 @@
 import logging
 import threading
 
-logger = logging.getLogger("ska-mid-dish-steering-control")
+logger = logging.getLogger("ska-mid-ds-scu")
 
 
 # pylint: disable=too-many-instance-attributes
@@ -186,9 +186,9 @@ class TrackTable:
                     "list starting at time:azimuth:elevation "
                     f"{self.tai[0]}:{self.azi[0]}:{self.ele[0]} "
                     "and ending at time:azimuth:elevation "
-                    f"{self.tai[len(self.tai)]}:"
-                    f"{self.azi[len(self.tai)]}:"
-                    f"{self.ele[len(self.tai)]}"
+                    f"{self.tai[-1]}:"
+                    f"{self.azi[-1]}:"
+                    f"{self.ele[-1]}"
                 )
 
         return f"file: {self.file_name}"
