@@ -143,15 +143,19 @@ from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
-from platformdirs import user_cache_dir
 
 from disq import configuration
-from disq.constants import PACKAGE_VERSION, CmdReturn, Command, ResultCode
+from disq.constants import (
+    PACKAGE_VERSION,
+    USER_CACHE_DIR,
+    CmdReturn,
+    Command,
+    ResultCode,
+)
 from disq.track_table import TrackTable
 
 logger = logging.getLogger("ska-mid-ds-scu")
 
-USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="DiSQ"))
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
 
 
@@ -352,6 +356,8 @@ class SteeringControlUnit:
     :param gui_app: Whether the instance is for a GUI application. Default is False.
     :param use_nodes_cache: Whether to use any existing caches of node IDs.
         Default is False.
+    :param nodes_cache_dir: Directory where to save the cache and load it from.
+        Default is the user cache directory determined with platformdirs.
     :param app_name: application name for OPC UA client description.
         Default 'SKA-Mid-DS-SCU v{PACKAGE_VERSION}'
     """
@@ -372,6 +378,7 @@ class SteeringControlUnit:
         eventloop: asyncio.AbstractEventLoop | None = None,
         gui_app: bool = False,
         use_nodes_cache: bool = False,
+        nodes_cache_dir: Path = USER_CACHE_DIR,
         app_name: str = f"SKA-Mid-DS-SCU v{PACKAGE_VERSION}",
     ) -> None:
         """Initialise SCU with the provided parameters."""
@@ -391,6 +398,7 @@ class SteeringControlUnit:
         logger.info("Event loop: %s", self.event_loop)
         self._gui_app = gui_app
         self._use_nodes_cache = use_nodes_cache
+        self._nodes_cache_dir = nodes_cache_dir
         self._app_name = app_name
         # Other local variables
         self._client: Client | None = None
@@ -1205,7 +1213,7 @@ class SteeringControlUnit:
         :return: A tuple containing dictionaries for nodes, attributes, and commands, as
             well as a string timestamp of when the dicts were generated.
         """
-        cache_file_path = USER_CACHE_DIR / f"{top_level_node_name}.json"
+        cache_file_path = self._nodes_cache_dir / f"{top_level_node_name}.json"
         cache = self._load_json_file(cache_file_path) if self._use_nodes_cache else None
         cached_nodes = cache.get(self._server_str_id) if cache is not None else None
         # Check for existing Node IDs cache
@@ -1234,7 +1242,7 @@ class SteeringControlUnit:
         logger.info(
             "Generating dicts of '%s' node's tree from existing cache in %s",
             top_level_node_name,
-            USER_CACHE_DIR,
+            self._nodes_cache_dir,
         )
         nodes = {}
         attributes = {}
@@ -2179,6 +2187,7 @@ def SCU(  # noqa: N802
     password: str | None = None,
     timeout: float = 10.0,
     use_nodes_cache: bool = False,
+    nodes_cache_dir: Path = USER_CACHE_DIR,
     authority_name: str | None = None,
 ) -> SteeringControlUnit:
     """SCU object generator method.
@@ -2197,6 +2206,7 @@ def SCU(  # noqa: N802
         password=password,
         timeout=timeout,
         use_nodes_cache=use_nodes_cache,
+        nodes_cache_dir=nodes_cache_dir,
     )
     scu.connect_and_setup()
     if authority_name is not None:
