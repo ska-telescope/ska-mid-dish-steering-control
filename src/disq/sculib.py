@@ -169,7 +169,7 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
         e.add_note(msg)  # type: ignore
         logger.exception("*** Exception caught: %s", e)
     except AttributeError:
-        logger.exception("*** Exception caught: %s [context: %s]", e, msg)
+        logger.error("*** Exception caught: %s [context: %s]", e, msg)
 
 
 def create_rw_attribute(
@@ -444,7 +444,7 @@ class SteeringControlUnit:
                 # pylint: disable:no-member
                 e.add_note(msg)  # type: ignore
             except AttributeError:
-                logger.exception(msg)
+                logger.error(msg)
             raise e
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
@@ -662,7 +662,7 @@ class SteeringControlUnit:
                 # pylint: disable:no-member
                 e.add_note(message)  # type: ignore
             except AttributeError:
-                logger.exception(message)
+                logger.error(message)
             raise e
         return client
 
