@@ -1,16 +1,10 @@
 [flake8]
-exclude = tests/resources/ds_opcua_server_mock.py
+# exclude = 
 max-line-length = 88
 
 # See https://github.com/PyCQA/pycodestyle/issues/373
-# support typing.overload decorator
-# allow Annotated[typ, some_func("some string")]
-# conflicts with black
 # docstring summary imperative mood
-extend-ignore = E203, 
-    F811, 
-    F722, 
-    W503,
+extend-ignore = E203,
     D401,
     
 docstring-style = sphinx
