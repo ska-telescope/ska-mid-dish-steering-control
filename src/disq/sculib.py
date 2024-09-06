@@ -35,23 +35,6 @@ manager without calling the teardown method explicitly:
     with SteeringControlUnit(host="localhost") as scu:
         scu.take_authority("LMC")
 
-Finally, the third and most complete option to initialise and connect a
-``SteeringControlUnit``, is to use the ``SCU_from_config()`` object generator method,
-which will:
-
-- Read the server address/port/namespace from the configuration file.
-- Configure logging.
-- Create (and return) the ``SteeringControlUnit`` object.
-- Connect to the server.
-- Take authority if requested.
-
-.. code-block:: python
-
-    from disq import SCU_from_config
-    scu = SCU_from_config("cetc54_simulator", authority_name="LMC")
-    # Do things with the scu instance..
-    scu.disconnect_and_cleanup()
-
 All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
 ``scu.nodes``. The keys are the full node names, the values are the Node objects.
 The full names of all nodes can be retrieved with:
@@ -144,14 +127,8 @@ from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 
-from disq.constants import (
-    PACKAGE_VERSION,
-    USER_CACHE_DIR,
-    CmdReturn,
-    Command,
-    ResultCode,
-)
-from disq.track_table import TrackTable
+from .constants import PACKAGE_VERSION, USER_CACHE_DIR, CmdReturn, Command, ResultCode
+from .track_table import TrackTable
 
 logger = logging.getLogger("ska-mid-ds-scu")
 
