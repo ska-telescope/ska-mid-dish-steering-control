@@ -1,0 +1,36 @@
+{
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        // "--with-cetc-sim"
+        // "--with-plc"
+    ],
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit"
+    },
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "black-formatter.importStrategy": "fromEnvironment",
+    "pylint.args": [
+        "--rcfile=.pylintrc"
+    ],
+    "flake8.args": [
+        "--config=.flake8"
+    ],
+    "isort.args": [
+        "--profile",
+        "black"
+    ],
+    "coverage-gutters.manualCoverageFilePaths": [
+        "build/reports/code-coverage.xml"
+    ],
+    "coverage-gutters.showLineCoverage": true,
+    "autoDocstring.docstringFormat": "sphinx",
+    "autoDocstring.guessTypes": true,
+    "autoDocstring.includeExtendedSummary": true,
+    "autoDocstring.startOnNewLine": true,
+    "editor.rulers": [
+        88
+    ]
+}

@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "ska-dish-steering-control"
+name = "ska-mid-dish-steering-control"
 version = "0.0.1"
 description = "Python module that interfaces with the OPCUA protocol of the dish structure controller"
 authors = ["Your Name <you@example.com>"]
@@ -7,12 +7,8 @@ license = "Copyright 2020 SKA Observatory"
 readme = "README.md"
 
 [[tool.poetry.source]]
-name = 'ska-nexus'
-url = 'https://artefact.skao.int/repository/pypi-internal/simple'
-
-[[tool.poetry.source]]
-name = "PyPI-public"
-url = 'https://pypi.org/simple'
+name = "ska-nexus"
+url = "https://artefact.skao.int/repository/pypi-all/simple"
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -33,6 +29,7 @@ pytest-json-report = "^1.4.1"
 flake8-docstrings = "^1.7.0"
 flake8-rst-docstrings = "^0.3.0"
 flake8-pyproject = "^1.2.3"
+mypy = "^1.9.0"
 
 [tool.poetry.group.docs.dependencies]
 Sphinx = "^6.2.1"
@@ -44,7 +41,18 @@ ska-ser-sphinx-theme = "^0.1.2"
 sphinx-autodoc-typehints = "^1.23.0"
 sphinxcontrib-plantuml = "^0.30"
 
+[tool.mypy]
+ignore_missing_imports = true        # Ignore missing stubs in imported modules
+strict_optional = false              # TODO: Remove, see https://mypy.readthedocs.io/en/stable/config_file.html#none-and-optional-handling
+disallow_incomplete_defs = true
+disable_error_code = "call-overload"
+
+[tool.isort]
+profile = "black"
+
+[tool.black] # See https://black.readthedocs.io/en/stable/usage_and_configuration/the_basics.html#configuration-format
+line-length = 88
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-

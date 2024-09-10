@@ -1,5 +1,3 @@
-# flake8: noqa:D401
-# pylint: disable=logging-fstring-interpolation,implicit-str-concat,fixme
 """
 Steering Control Unit (SCU) for a SKA-Mid Dish Structure Controller OPC UA server.
 
@@ -123,69 +121,18 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Final, Type, TypedDict
 
-import yaml  # type: ignore
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
-from platformdirs import user_cache_dir
 
-from .constants import CmdReturn, Command, ResultCode
+from .constants import PACKAGE_VERSION, USER_CACHE_DIR, CmdReturn, Command, ResultCode
 from .track_table import TrackTable
 
-logger = logging.getLogger("ska-dish-steering-control")
+logger = logging.getLogger("ska-mid-ds-scu")
 
-USER_CACHE_DIR: Final = Path(user_cache_dir(appauthor="SKAO", appname="ska-dish-steering-control"))
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
-
-
-def configure_logging(default_log_level: int = logging.INFO) -> None:
-    """
-    Configure logging settings based on a YAML configuration file.
-
-    :param default_log_level: The default logging level to use if no configuration file
-        is found. Defaults to logging.INFO.
-    :raises ValueError: If an error occurs while configuring logging from the file.
-    """
-    disq_log_config_file = Path("disq_logging_config.yaml")
-    if disq_log_config_file.exists() is False:
-        disq_log_config_file = Path(
-            resources.files(__package__) / "default_logging_config.yaml"  # type: ignore
-        )
-    config = None
-    if disq_log_config_file.exists():
-        with open(disq_log_config_file, "rt", encoding="UTF-8") as f:
-            try:
-                config = yaml.safe_load(f.read())
-            except Exception as e:
-                print(f"{type(e).__name__}: '{e}'")
-                print(
-                    "WARNING: Unable to read logging configuration file " f"{disq_log_config_file}"
-                )
-        try:
-            at_time = datetime.time.fromisoformat(config["handlers"]["file_handler"]["atTime"])
-            config["handlers"]["file_handler"]["atTime"] = at_time
-        except KeyError as e:
-            print(f"WARNING: {e} not found in logging configuration for file_handler")
-    else:
-        print(f"WARNING: Logging configuration file {disq_log_config_file} not found")
-
-    if config is None:
-        print(f"Reverting to basic logging config at level:{default_log_level}")
-        logging.basicConfig(level=default_log_level)
-    else:
-        Path("logs").mkdir(parents=True, exist_ok=True)
-        try:
-            logging.config.dictConfig(config)
-        except ValueError as e:
-            print(f"{type(e).__name__}: '{e}'")
-            print(
-                "WARNING: Caught exception. Unable to configure logging from file "
-                f"{disq_log_config_file}. Reverting to logging to the console "
-                "(basicConfig)."
-            )
-            logging.basicConfig(level=default_log_level)
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -194,7 +141,12 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
 
     :param e: The exception that was caught.
     """
-    logger.exception("*** Exception caught: %s [context: %s]", e, msg)
+    try:
+        # pylint: disable:no-member
+        e.add_note(msg)  # type: ignore
+        logger.exception("*** Exception caught: %s", e)
+    except AttributeError:
+        logger.error("*** Exception caught: %s [context: %s]", e, msg)
 
 
 def create_rw_attribute(
@@ -225,7 +177,9 @@ def create_rw_attribute(
         @property
         def value(self) -> Any:
             try:
-                return asyncio.run_coroutine_threadsafe(node.get_value(), event_loop).result()
+                return asyncio.run_coroutine_threadsafe(
+                    node.get_value(), event_loop
+                ).result()
             except Exception as e:
                 msg = f"Failed to read value of node: {node_name}"
                 asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
@@ -234,7 +188,9 @@ def create_rw_attribute(
         @value.setter
         def value(self, _value: Any) -> None:
             try:
-                asyncio.run_coroutine_threadsafe(node.set_value(_value), event_loop).result()
+                asyncio.run_coroutine_threadsafe(
+                    node.set_value(_value), event_loop
+                ).result()
             except Exception as e:
                 msg = f"Failed to write value of node: {node_name}={_value}"
                 asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
@@ -265,7 +221,9 @@ def create_ro_attribute(
         @property
         def value(self) -> Any:
             try:
-                return asyncio.run_coroutine_threadsafe(node.get_value(), event_loop).result()
+                return asyncio.run_coroutine_threadsafe(
+                    node.get_value(), event_loop
+                ).result()
             except Exception as e:
                 msg = f"Failed to read value of node: {node_name}"
                 asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
@@ -337,7 +295,9 @@ class SubscriptionHandler:
                 e,
             )
             if status.Status.value == ua.StatusCodes.BadShutdown:
-                self.bad_shutdown_callback(f"Connection is closed - asyncua exception: {e}")
+                self.bad_shutdown_callback(
+                    f"Connection is closed - asyncua exception: {e}"
+                )
 
 
 class CachedNodesDict(TypedDict):
@@ -372,10 +332,15 @@ class SteeringControlUnit:
     :param gui_app: Whether the instance is for a GUI application. Default is False.
     :param use_nodes_cache: Whether to use any existing caches of node IDs.
         Default is False.
+    :param nodes_cache_dir: Directory where to save the cache and load it from.
+        Default is the user cache directory determined with platformdirs.
     :param app_name: application name for OPC UA client description.
-        Default 'DSU'
+        Default 'SKA-Mid-DS-SCU v{PACKAGE_VERSION}'
     """
 
+    # ------------------
+    # Setup and teardown
+    # ------------------
     # pylint: disable=too-many-arguments,too-many-locals
     def __init__(
         self,
@@ -389,7 +354,8 @@ class SteeringControlUnit:
         eventloop: asyncio.AbstractEventLoop | None = None,
         gui_app: bool = False,
         use_nodes_cache: bool = False,
-        app_name: str = "DSU",
+        nodes_cache_dir: Path = USER_CACHE_DIR,
+        app_name: str = f"SKA-Mid-DS-SCU v{PACKAGE_VERSION}",
     ) -> None:
         """Initialise SCU with the provided parameters."""
         logger.info("Initialising SCU")
@@ -408,37 +374,33 @@ class SteeringControlUnit:
         logger.info("Event loop: %s", self.event_loop)
         self._gui_app = gui_app
         self._use_nodes_cache = use_nodes_cache
+        self._nodes_cache_dir = nodes_cache_dir
         self._app_name = app_name
         # Other local variables
-        self.client: Client | None = None
-        self.event_loop_thread: threading.Thread | None = None
-        self.subscription_handler = None
-        self.subscriptions: dict = {}
-        self.subscription_queue: queue.Queue = queue.Queue()
+        self._client: Client | None = None
+        self._event_loop_thread: threading.Thread | None = None
+        self._subscription_handler = None
+        self._subscriptions: dict = {}
+        self._subscription_queue: queue.Queue = queue.Queue()
         self._user: int | None = None
         self._session_id: ua.UInt16 | None = None
         self._server_url: str
         self._server_str_id: str
-        self.plc_prg: Node
-        self.ns_idx: int
-        self.nodes: NodeDict
-        self.nodes_reversed: dict[tuple[Node, int], str]
-        self.attributes: AttrDict
-        self.commands: CmdDict
+        self._plc_prg: Node
+        self._ns_idx: int
+        self._nodes: NodeDict
+        self._nodes_reversed: dict[tuple[Node, int], str]
+        self._attributes: AttrDict
+        self._commands: CmdDict
         self._plc_prg_nodes_timestamp: str
-        self.parameter: Node
-        self.parameter_ns_idx: int
-        self.parameter_nodes: NodeDict
-        self.parameter_attributes: AttrDict
-        self.parameter_commands: CmdDict
-        self.server: Node
-        self.server_nodes: NodeDict
-        self.server_attributes: AttrDict
-        self.server_commands: CmdDict
-        self.track_table_queue: queue.Queue | None = None
-        self.stop_track_table_schedule_task_event: threading.Event | None = None
-        self.track_table_scheduled_task: Future | None = None
-        self.track_table: TrackTable | None = None
+        self._parameter: Node
+        self._parameter_ns_idx: int
+        self._parameter_nodes: NodeDict
+        self._parameter_attributes: AttrDict
+        self._track_table_queue: queue.Queue | None = None
+        self._stop_track_table_schedule_task_event: threading.Event | None = None
+        self._track_table_scheduled_task: Future | None = None
+        self._track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[Enum]] = {}
 
     def connect_and_setup(self) -> None:
@@ -448,14 +410,18 @@ class SteeringControlUnit:
         :raises Exception: If connection to OPC UA server fails.
         """
         try:
-            self.client = self.connect()
+            self._client = self.connect()
         except Exception as e:
             msg = (
                 "Cannot connect to the OPC UA server. Please "
                 "check the connection parameters that were "
-                "passed to instantiate the SCU!"
+                "passed to instantiate the sculib!"
             )
-            logger.error("%s - %s", msg, e)
+            try:
+                # pylint: disable:no-member
+                e.add_note(msg)  # type: ignore
+            except AttributeError:
+                logger.error(msg)
             raise e
         if self.server_version is None:
             self._server_str_id = f"{self._server_url} - version unknown"
@@ -467,7 +433,7 @@ class SteeringControlUnit:
                     and Version(self.server_version) < COMPATIBLE_CETC_SIM_VER
                 ):
                     raise RuntimeError(
-                        f"DiSQ-SCU not compatible with v{self.server_version} of CETC "
+                        f"SCU not compatible with v{self.server_version} of CETC "
                         f"simulator, only v{COMPATIBLE_CETC_SIM_VER} and up"
                     )
             except InvalidVersion:
@@ -475,7 +441,7 @@ class SteeringControlUnit:
                     "Server version (%s) does not conform to semantic versioning",
                     self.server_version,
                 )
-        self.populate_node_dicts(self._gui_app, self._use_nodes_cache)
+        self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
         logger.info("Successfully connected to server and initialised SCU client")
 
@@ -503,57 +469,17 @@ class SteeringControlUnit:
 
         Stop the event loop if it was started in a separate thread.
         """
-        if self.event_loop_thread is not None:
+        if self._event_loop_thread is not None:
             # Signal the event loop thread to stop.
             self.event_loop.call_soon_threadsafe(self.event_loop.stop)
             # Join the event loop thread once it is done processing tasks.
-            self.event_loop_thread.join()
+            self._event_loop_thread.join()
 
     def __exit__(self, *args: Any) -> None:
         """Disconnect from server and clean up client resources."""
         self.disconnect_and_cleanup()
 
-    @cached_property
-    def server_version(self) -> str | None:
-        """
-        The software/firmware version of the server that SCU is connected to.
-
-        :return: The version of the server, or None if the server version info could
-            not be read successfully.
-        """
-        try:
-            version_node = asyncio.run_coroutine_threadsafe(
-                self.client.nodes.objects.get_child(
-                    [
-                        f"{self.ns_idx}:Logic",
-                        f"{self.ns_idx}:Application",
-                        f"{self.ns_idx}:PLC_PRG",
-                        f"{self.ns_idx}:Management",
-                        f"{self.ns_idx}:NamePlate",
-                        f"{self.ns_idx}:DscSoftwareVersion",
-                    ]
-                ),
-                self.event_loop,
-            ).result()
-            server_version: str = asyncio.run_coroutine_threadsafe(
-                version_node.get_value(), self.event_loop
-            ).result()
-        except Exception as e:
-            msg = "Failed to read value of DscSoftwareVersion attribute."
-            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
-            server_version = None
-        return server_version
-
-    @property
-    def plc_prg_nodes_timestamp(self) -> str:
-        """
-        Generation timestamp of the PLC_PRG Node tree.
-
-        :return: timestamp in 'yyyy-mm-dd hh:mm:ss' string format.
-        """
-        return self._plc_prg_nodes_timestamp
-
-    def run_event_loop(
+    def _run_event_loop(
         self,
         event_loop: asyncio.AbstractEventLoop,
         thread_started_event: threading.Event,
@@ -582,16 +508,19 @@ class SteeringControlUnit:
         """
         event_loop = asyncio.new_event_loop()
         thread_started_event = threading.Event()
-        self.event_loop_thread = threading.Thread(
-            target=self.run_event_loop,
+        self._event_loop_thread = threading.Thread(
+            target=self._run_event_loop,
             args=(event_loop, thread_started_event),
-            name=f"asyncio event loop for SCU instance {self.__class__.__name__}",
+            name=f"asyncio event loop for sculib instance {self.__class__.__name__}",
             daemon=True,
         )
-        self.event_loop_thread.start()
+        self._event_loop_thread.start()
         thread_started_event.wait(5.0)  # Wait for the event loop thread to start
 
-    def set_up_encryption(self, client: Client, user: str, pw: str) -> None:
+    # --------------------------
+    # Client connection handling
+    # --------------------------
+    def _set_up_encryption(self, client: Client, user: str, pw: str) -> None:
         """
         Set up encryption for the client with the given user credentials.
 
@@ -604,7 +533,9 @@ class SteeringControlUnit:
         # this is generated if it does not exist
         opcua_client_cert = Path(str(resources.files(__package__) / "certs/cert.der"))
         # get from simulator/PKI/private/SimpleServer_2048.der in tarball
-        opcua_server_cert = Path(str(resources.files(__package__) / "certs/SimpleServer_2048.der"))
+        opcua_server_cert = Path(
+            str(resources.files(__package__) / "certs/SimpleServer_2048.der")
+        )
         client.set_user(user)
         client.set_password(pw)
 
@@ -635,7 +566,6 @@ class SteeringControlUnit:
             self.event_loop,
         ).result()
 
-    # pylint: disable=too-many-arguments
     def connect(self) -> Client:
         """
         Connect to an OPC UA server.
@@ -652,7 +582,7 @@ class SteeringControlUnit:
         client.name = f"{self._app_name} @{hostname}"
         client.description = f"{self._app_name} @{hostname}"
         if self.username is not None and self.password is not None:
-            self.set_up_encryption(client, self.username, self.password)
+            self._set_up_encryption(client, self.username, self.password)
         _ = asyncio.run_coroutine_threadsafe(client.connect(), self.event_loop).result()
         self._server_url = server_url
         try:
@@ -663,12 +593,14 @@ class SteeringControlUnit:
             logger.warning("Exception trying load_data_type_definitions(): %s", exc)
         # Get the namespace index for the PLC's Parameter node
         try:
-            self.parameter_ns_idx = asyncio.run_coroutine_threadsafe(
-                client.get_namespace_index("http://boschrexroth.com/OpcUa/Parameter/Objects/"),
+            self._parameter_ns_idx = asyncio.run_coroutine_threadsafe(
+                client.get_namespace_index(
+                    "http://boschrexroth.com/OpcUa/Parameter/Objects/"
+                ),
                 self.event_loop,
             ).result()
         except Exception:
-            self.parameter_ns_idx = None
+            self._parameter_ns_idx = None
             message = (
                 "*** Exception caught while trying to access the namespace "
                 "'http://boschrexroth.com/OpcUa/Parameter/Objects/' for the parameter "
@@ -679,12 +611,12 @@ class SteeringControlUnit:
 
         try:
             if self.namespace != "" and self.endpoint != "":
-                self.ns_idx = asyncio.run_coroutine_threadsafe(
+                self._ns_idx = asyncio.run_coroutine_threadsafe(
                     client.get_namespace_index(self.namespace), self.event_loop
                 ).result()
             else:
                 # Force namespace index for first physical controller
-                self.ns_idx = 2
+                self._ns_idx = 2
         except ValueError as e:
             namespaces = None
             try:
@@ -703,8 +635,11 @@ class SteeringControlUnit:
                 " with the normal operation but list the available namespaces here for "
                 f"future reference:\n{namespaces}"
             )
-            logger.error(message)
-            # e.add_note(message)
+            try:
+                # pylint: disable:no-member
+                e.add_note(message)  # type: ignore
+            except AttributeError:
+                logger.error(message)
             raise e
         return client
 
@@ -714,11 +649,13 @@ class SteeringControlUnit:
 
         :param client: The client to disconnect. If None, disconnect self.client.
         """
-        if client is None and self.client is not None:
-            client = self.client
-            self.client = None
+        if client is None and self._client is not None:
+            client = self._client
+            self._client = None
         if client is not None:
-            _ = asyncio.run_coroutine_threadsafe(client.disconnect(), self.event_loop).result()
+            _ = asyncio.run_coroutine_threadsafe(
+                client.disconnect(), self.event_loop
+            ).result()
 
     def connection_reset(self) -> None:
         """Reset the client by disconnecting and reconnecting."""
@@ -731,102 +668,93 @@ class SteeringControlUnit:
 
         :return: True if the SCU has a connection, False otherwise.
         """
-        return self.client is not None
+        return self._client is not None
 
-    def take_authority(self, user: str | int) -> tuple[ResultCode, str]:
+    # ----------------
+    # Class properties
+    # ----------------
+    @cached_property
+    def server_version(self) -> str | None:
         """
-        Take command authority.
+        The software/firmware version of the server that SCU is connected to.
 
-        :param user: Authority user name - DscCmdAuthorityType enum.
-        :return: The result of the command execution.
-        """
-        user_int = (
-            self.convert_enum_to_int("DscCmdAuthorityType", user)
-            if isinstance(user, str)
-            else user
-        )
-        if user_int == 2:  # HHP
-            code = ResultCode.NOT_EXECUTED
-            msg = "DiSQ-SCU cannot take authority as HHP user"
-            logger.info("TakeAuth command not executed, as %s", msg)
-        elif self._user is None or (self._user is not None and self._user < user_int):
-            code, msg, vals = self.commands[Command.TAKE_AUTH.value](ua.UInt16(user_int))
-            if code == ResultCode.COMMAND_DONE:
-                self._user = user_int
-                self._session_id = ua.UInt16(vals[0])
-            else:
-                logger.error("TakeAuth command failed with message '%s'", msg)
-        else:
-            user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
-            code = ResultCode.NOT_EXECUTED
-            msg = f"DiSQ-SCU already has command authority with user {user_str}"
-            logger.info("TakeAuth command not executed, as %s", msg)
-        return code, msg
-
-    def release_authority(self) -> tuple[ResultCode, str]:
-        """
-        Release command authority.
-
-        :return: The result of the command execution.
-        """
-        if self._user is not None and self._session_id is not None:
-            code, msg, _ = self.commands[Command.RELEASE_AUTH.value](ua.UInt16(self._user))
-            if code == ResultCode.COMMAND_DONE:
-                self._user, self._session_id = None, None
-            elif code in [ResultCode.NO_CMD_AUTH, ResultCode.COMMAND_FAILED]:
-                user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
-                logger.info(
-                    "DiSQ-SCU has already lost command authority as user '%s' to "
-                    "another client.",
-                    user,
-                )
-                self._user, self._session_id = None, None
-        else:
-            code = ResultCode.NOT_EXECUTED
-            msg = "DiSQ-SCU has no command authority to release."
-            logger.info(msg)
-        return code, msg
-
-    def convert_enum_to_int(self, enum_type: str, name: str) -> ua.UInt16 | None:
-        """
-        Convert the name (string) of the given enumeration type to an integer value.
-
-        :param enum_type: the name of the enumeration type to use.
-        :param name: of enum to convert.
-        :return: enum integer value, or None if the type does not exist.
+        Returns None if the server version info could not be read successfully.
         """
         try:
-            value = getattr(ua, enum_type)[name]
-            integer = value.value if isinstance(value, Enum) else value
-            return ua.UInt16(integer)
-        except KeyError:
-            logger.error("'%s' enum does not have '%s key!", enum_type, name)
-            return None
-        except AttributeError:
-            logger.error("OPC-UA server has no '%s' enum!", enum_type)
-            return None
+            version_node = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [
+                        f"{self._ns_idx}:Logic",
+                        f"{self._ns_idx}:Application",
+                        f"{self._ns_idx}:PLC_PRG",
+                        f"{self._ns_idx}:Management",
+                        f"{self._ns_idx}:NamePlate",
+                        f"{self._ns_idx}:DscSoftwareVersion",
+                    ]
+                ),
+                self.event_loop,
+            ).result()
+            server_version: str = asyncio.run_coroutine_threadsafe(
+                version_node.get_value(), self.event_loop
+            ).result()
+        except Exception as e:
+            msg = "Failed to read value of DscSoftwareVersion attribute."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            server_version = None
+        return server_version
 
-    def convert_int_to_enum(self, enum_type: str, value: int) -> str | int:
-        """
-        Convert the integer value of the given enumeration type to its name (string).
+    @property
+    def nodes(self) -> NodeDict:
+        """Dictionary of the 'PLC_PRG' node's entire tree of `asyncua.Node` objects."""
+        return self._nodes
 
-        :param enum_type: the name of the enumeration type to use.
-        :param value: of enum to convert.
-        :return: enum name, or the original integer value if the type does not exist.
+    @property
+    def attributes(self) -> AttrDict:
         """
-        try:
-            return str(getattr(ua, enum_type)(value).name) if hasattr(ua, enum_type) else value
-        except ValueError:
-            logger.error("%s is not a valid '%s' enum value!", value, enum_type)
-            return value
+        Dictionary containing the attributes in the 'PLC_PRG' node tree.
+
+        The values are callables that return the current value.
+        """
+        return self._attributes
+
+    @property
+    def commands(self) -> CmdDict:
+        """
+        Dictionary containing command methods in the 'PLC_PRG' node tree.
+
+        The values are callables which require the expected parameters.
+        """
+        return self._commands
+
+    @property
+    def plc_prg_nodes_timestamp(self) -> str:
+        """
+        Generation timestamp of the 'PLC_PRG' nodes.
+
+        The timestamp is in 'yyyy-mm-dd hh:mm:ss' string format.
+        """
+        return self._plc_prg_nodes_timestamp
+
+    @property
+    def parameter_nodes(self) -> NodeDict:
+        """Dictionary containing the parameter nodes of the PLC program."""
+        return self._parameter_nodes
+
+    @property
+    def parameter_attributes(self) -> AttrDict:
+        """
+        Dictionary containing the attributes of the parameter nodes in the PLC program.
+
+        The values are callables that return the current value.
+        """
+        return self._parameter_attributes
 
     @property
     def opcua_enum_types(self) -> dict[str, Type[Enum]]:
         """
-        Retrieve a dictionary of OPC-UA enum types.
+        Dictionary mapping OPC-UA enum type names to their corresponding value.
 
-        :return: A dictionary mapping OPC-UA enum type names to their corresponding
-            value. The value being an enumerated type.
+        The value being an enumerated type.
         """
         return self._opcua_enum_types
 
@@ -859,7 +787,9 @@ class SteeringControlUnit:
                 self._opcua_enum_types.update({type_name: getattr(ua, type_name)})
             except AttributeError:
                 try:
-                    enum_node = self.client.get_node(f"ns={self.ns_idx};s=@{type_name}.EnumValues")
+                    enum_node = self._client.get_node(
+                        f"ns={self._ns_idx};s=@{type_name}.EnumValues"
+                    )
                     new_enum = self._create_enum_from_node(type_name, enum_node)
                     self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
                     setattr(ua, type_name, new_enum)
@@ -872,8 +802,111 @@ class SteeringControlUnit:
                 str(missing_types),
             )
 
+    # ----------------------
+    # Command user authority
+    # ----------------------
+    def take_authority(self, user: str | int) -> tuple[ResultCode, str]:
+        """
+        Take command authority.
+
+        :param user: Authority user name - DscCmdAuthorityType enum.
+        :return: The result of the command execution.
+        """
+        user_int = (
+            self.convert_enum_to_int("DscCmdAuthorityType", user)
+            if isinstance(user, str)
+            else user
+        )
+        if user_int == 2:  # HHP
+            code = ResultCode.NOT_EXECUTED
+            msg = "SCU cannot take authority as HHP user"
+            logger.info("TakeAuth command not executed, as %s", msg)
+        elif self._user is None or (self._user is not None and self._user < user_int):
+            code, msg, vals = self.commands[Command.TAKE_AUTH.value](
+                ua.UInt16(user_int)
+            )
+            if code == ResultCode.COMMAND_DONE:
+                self._user = user_int
+                self._session_id = ua.UInt16(vals[0])
+            else:
+                logger.error("TakeAuth command failed with message '%s'", msg)
+        else:
+            user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+            code = ResultCode.NOT_EXECUTED
+            msg = f"SCU already has command authority with user {user_str}"
+            logger.info("TakeAuth command not executed, as %s", msg)
+        return code, msg
+
+    def release_authority(self) -> tuple[ResultCode, str]:
+        """
+        Release command authority.
+
+        :return: The result of the command execution.
+        """
+        if self._user is not None and self._session_id is not None:
+            code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
+                ua.UInt16(self._user)
+            )
+            if code == ResultCode.COMMAND_DONE:
+                self._user, self._session_id = None, None
+            elif code in [ResultCode.NO_CMD_AUTH, ResultCode.COMMAND_FAILED]:
+                user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+                logger.info(
+                    "SCU has already lost command authority as user '%s' to "
+                    "another client.",
+                    user,
+                )
+                self._user, self._session_id = None, None
+        else:
+            code = ResultCode.NOT_EXECUTED
+            msg = "SCU has no command authority to release."
+            logger.info(msg)
+        return code, msg
+
+    # ---------------
+    # General methods
+    # ---------------
+    def convert_enum_to_int(self, enum_type: str, name: str) -> ua.UInt16 | None:
+        """
+        Convert the name (string) of the given enumeration type to an integer value.
+
+        :param enum_type: the name of the enumeration type to use.
+        :param name: of enum to convert.
+        :return: enum integer value, or None if the type does not exist.
+        """
+        try:
+            value = getattr(ua, enum_type)[name]
+            integer = value.value if isinstance(value, Enum) else value
+            return ua.UInt16(integer)
+        except KeyError:
+            logger.error("'%s' enum does not have '%s key!", enum_type, name)
+            return None
+        except AttributeError:
+            logger.error("OPC-UA server has no '%s' enum!", enum_type)
+            return None
+
+    def convert_int_to_enum(self, enum_type: str, value: int) -> str | int:
+        """
+        Convert the integer value of the given enumeration type to its name (string).
+
+        :param enum_type: the name of the enumeration type to use.
+        :param value: of enum to convert.
+        :return: enum name, or the original integer value if the type does not exist.
+        """
+        try:
+            return (
+                str(getattr(ua, enum_type)(value).name)
+                if hasattr(ua, enum_type)
+                else value
+            )
+        except ValueError:
+            logger.error("%s is not a valid '%s' enum value!", value, enum_type)
+            return value
+
     def _create_enum_from_node(self, name: str, node: Node) -> Enum:
-        enum_values = asyncio.run_coroutine_threadsafe(node.get_value(), self.event_loop).result()
+        enum_values = asyncio.run_coroutine_threadsafe(
+            node.get_value(), self.event_loop
+        ).result()
         if not isinstance(enum_values, list):
             raise ValueError(f"Expected a list of EnumValueType for node '{name}'.")
         enum_dict = {}
@@ -900,7 +933,9 @@ class SteeringControlUnit:
         :return: A function that can be used to execute a method on the Node.
         """
         try:
-            node_parent = asyncio.run_coroutine_threadsafe(node.get_parent(), event_loop).result()
+            node_parent = asyncio.run_coroutine_threadsafe(
+                node.get_parent(), event_loop
+            ).result()
             node_call_method = node_parent.call_method
         except AttributeError as e:
             logger.error(
@@ -922,7 +957,9 @@ class SteeringControlUnit:
 
             return empty_func
 
-        read_name = asyncio.run_coroutine_threadsafe(node.read_display_name(), event_loop)
+        read_name = asyncio.run_coroutine_threadsafe(
+            node.read_display_name(), event_loop
+        )
         node_id = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
 
         # pylint: disable=protected-access
@@ -944,7 +981,7 @@ class SteeringControlUnit:
             if need_authority and self._session_id is None:
                 return (
                     ResultCode.NOT_EXECUTED,
-                    "DiSQ-SCU has no command authority to execute requested command",
+                    "SCU has no command authority to execute requested command",
                     result_output,
                 )
             try:
@@ -963,18 +1000,21 @@ class SteeringControlUnit:
                     result_output = result
                 else:
                     result_code_int = result
-                result_code, result_msg = self._validate_command_result_code(result_code_int)
+                result_code, result_msg = self._validate_command_result_code(
+                    result_code_int
+                )
                 # Handle specific result codes
                 if result_code == ResultCode.UNKNOWN:
                     logger.warning(
-                        "DiSQ-SCU has received an unknown result code: %s - "
-                        "Check server's CmdResponseType and DiSQ ResultCode enum!",
+                        "SCU has received an unknown result code: %s - "
+                        "Check server's CmdResponseType and ResultCode enum!",
                         result_code_int,
                     )
                 elif result_code == ResultCode.NO_CMD_AUTH:
                     user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                     logger.info(
-                        "DiSQ-SCU has lost command authority as user '%s' to " "another client.",
+                        "SCU has lost command authority as user '%s' to "
+                        "another client.",
                         user,
                     )
                     self._user, self._session_id = None, None
@@ -982,14 +1022,18 @@ class SteeringControlUnit:
                 result_code = ResultCode.CONNECTION_CLOSED
                 result_msg = f"asyncua exception: {str(e)}"
                 asyncio.run_coroutine_threadsafe(
-                    handle_exception(e, f"Command: {node_id} ({node_name}), args: {args}"),
+                    handle_exception(
+                        e, f"Command: {node_id} ({node_name}), args: {args}"
+                    ),
                     event_loop,
                 )
             except ua.UaError as e:  # Base asyncua exception
                 result_code = ResultCode.UA_BASE_EXCEPTION
                 result_msg = f"asyncua exception: {str(e)}"
                 asyncio.run_coroutine_threadsafe(
-                    handle_exception(e, f"Command: {node_id} ({node_name}), args: {args}"),
+                    handle_exception(
+                        e, f"Command: {node_id} ({node_name}), args: {args}"
+                    ),
                     event_loop,
                 )
             return result_code, result_msg, result_output
@@ -1020,6 +1064,9 @@ class SteeringControlUnit:
             result_msg = result_enum.name
         return result_enum, result_msg
 
+    # -----------------------------
+    # Node dictionaries and caching
+    # -----------------------------
     def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
         """
         Load JSON file.
@@ -1066,112 +1113,100 @@ class SteeringControlUnit:
         with open(file_path, "w+", encoding="UTF-8") as file:
             json.dump(cached_data, file, indent=4, sort_keys=True)
 
-    def populate_node_dicts(self, plc_only: bool = False, use_cache: bool = False) -> None:
+    def _populate_node_dicts(self) -> None:
         """
         Populate dictionaries with Node objects.
 
         This method populates dictionaries with Node objects for different categories
         like nodes, attributes, and commands.
 
-        nodes: Contains the entire uasync.Node-tree from and including
+        nodes: Contains the entire asyncua.Node-tree from and including
         the 'PLC_PRG' node.
 
-        attributes: Contains the attributes in the uasync.Node-tree from
+        attributes: Contains the attributes in the asyncua.Node-tree from
         the 'PLC_PRG' node on. The values are callables that return the
         current value.
 
-        commands: Contains all callable methods in the uasync.Node-tree
+        commands: Contains all callable methods in the asyncua.Node-tree
         from the 'PLC_PRG' node on. The values are callables which
         just require the expected parameters.
 
         This method may raise exceptions related to asyncio operations.
         """
+        # Create node dicts of the PLC_PRG node's tree
         top_node_name = "PLC_PRG"
-        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
-        cache = self._load_json_file(cache_file_path) if use_cache else None
-        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
-
-        # Check for existing Nodes IDs cache
-        if cached_nodes:
-            (
-                self.nodes,
-                self.attributes,
-                self.commands,
-            ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"], top_node_name)
-            self._plc_prg_nodes_timestamp = cached_nodes["timestamp"]
-        else:
-            plc_prg = asyncio.run_coroutine_threadsafe(
-                self.client.nodes.objects.get_child(
-                    [
-                        f"{self.ns_idx}:Logic",
-                        f"{self.ns_idx}:Application",
-                        f"{self.ns_idx}:{top_node_name}",
-                    ]
-                ),
-                self.event_loop,
-            ).result()
-            (
-                self.nodes,
-                self.attributes,
-                self.commands,
-            ) = self.generate_node_dicts_from_server(plc_prg, top_node_name)
-            self.plc_prg = plc_prg
-            self._cache_node_ids(cache_file_path, self.nodes)
-            self._plc_prg_nodes_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
+        self._plc_prg = asyncio.run_coroutine_threadsafe(
+            self._client.nodes.objects.get_child(
+                [
+                    f"{self._ns_idx}:Logic",
+                    f"{self._ns_idx}:Application",
+                    f"{self._ns_idx}:{top_node_name}",
+                ]
+            ),
+            self.event_loop,
+        ).result()
+        (
+            self._nodes,
+            self._attributes,
+            self._commands,
+            self._plc_prg_nodes_timestamp,
+        ) = self._check_cache_and_generate_node_dicts(self._plc_prg, top_node_name)
+        self._nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
 
         # We also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         top_node_name = "Parameter"
-        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
-        if not plc_only and self.parameter_ns_idx is not None:
-            cache = self._load_json_file(cache_file_path) if use_cache else None
-            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
-            if cached_nodes:
-                (
-                    self.parameter_nodes,
-                    self.parameter_attributes,
-                    self.parameter_commands,
-                ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"], top_node_name)
-            else:
-                parameter = asyncio.run_coroutine_threadsafe(
-                    self.client.nodes.objects.get_child(
-                        [f"{self.parameter_ns_idx}:{top_node_name}"]
-                    ),
-                    self.event_loop,
-                ).result()
-                (
-                    self.parameter_nodes,
-                    self.parameter_attributes,
-                    self.parameter_commands,
-                ) = self.generate_node_dicts_from_server(parameter, top_node_name)
-                self.parameter = parameter
-                self._cache_node_ids(cache_file_path, self.parameter_nodes)
+        if not self._gui_app and self._parameter_ns_idx is not None:
+            self._parameter = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [f"{self._parameter_ns_idx}:{top_node_name}"]
+                ),
+                self.event_loop,
+            ).result()
+            (
+                self._parameter_nodes,
+                self._parameter_attributes,
+                _,  # Parameter tree has no commands, so it is just an empty dict
+                _,  # timestamp
+            ) = self._check_cache_and_generate_node_dicts(
+                self._parameter, top_node_name
+            )
 
-        # And now create dicts for all nodes of the OPC UA server. This is
-        # intended to serve as the API for the Dish LMC.
-        top_node_name = "Root"
-        cache_file_path = USER_CACHE_DIR / f"{top_node_name}.json"
-        if not plc_only:
-            cache = self._load_json_file(cache_file_path) if use_cache else None
-            cached_nodes = cache.get(self._server_str_id) if cache is not None else None
-            if cached_nodes:
-                (
-                    self.server_nodes,
-                    self.server_attributes,
-                    self.server_commands,
-                ) = self.generate_node_dicts_from_cache(cached_nodes["node_ids"], top_node_name)
-            else:
-                server = self.client.get_root_node()
-                (
-                    self.server_nodes,
-                    self.server_attributes,
-                    self.server_commands,
-                ) = self.generate_node_dicts_from_server(server, top_node_name)
-                self.server = server
-                self._cache_node_ids(cache_file_path, self.server_nodes)
+    def _check_cache_and_generate_node_dicts(
+        self,
+        top_level_node: Node,
+        top_level_node_name: str,
+    ) -> tuple[NodeDict, AttrDict, CmdDict, str]:
+        """
+        Check for an existing nodes cache to use and generate the dicts accordingly.
 
-    def generate_node_dicts_from_cache(
+        If the ``use_nodes_cache`` var is set, check if there is an existing cache file
+        matching the top level node name, load the JSON and generate the node dicts from
+        it. Otherwise generate the node dicts by scanning the node's tree on the server.
+
+        :param top_level_node: The top-level node for which to generate dictionaries.
+        :param top_level_node_name: Name of the top-level node.
+        :return: A tuple containing dictionaries for nodes, attributes, and commands, as
+            well as a string timestamp of when the dicts were generated.
+        """
+        cache_file_path = self._nodes_cache_dir / f"{top_level_node_name}.json"
+        cache = self._load_json_file(cache_file_path) if self._use_nodes_cache else None
+        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+        # Check for existing Node IDs cache
+        if cached_nodes:
+            node_dicts = self._generate_node_dicts_from_cache(
+                cached_nodes["node_ids"], top_level_node_name
+            )
+            timestamp = cached_nodes["timestamp"]
+        else:
+            node_dicts = self.generate_node_dicts_from_server(
+                top_level_node, top_level_node_name
+            )
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._cache_node_ids(cache_file_path, node_dicts[0])
+        return *node_dicts, timestamp
+
+    def _generate_node_dicts_from_cache(
         self, cache_dict: dict[str, tuple[str, int]], top_level_node_name: str
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
@@ -1183,18 +1218,20 @@ class SteeringControlUnit:
         logger.info(
             "Generating dicts of '%s' node's tree from existing cache in %s",
             top_level_node_name,
-            USER_CACHE_DIR,
+            self._nodes_cache_dir,
         )
         nodes = {}
         attributes = {}
         commands = {}
         for node_name, tup in cache_dict.items():
             node_id, node_class = tup
-            node = self.client.get_node(node_id)
+            node = self._client.get_node(node_id)
             nodes[node_name] = (node, node_class)
             if node_class == 2:
                 # An attribute. Add it to the attributes dict.
-                attributes[node_name] = create_rw_attribute(node, self.event_loop, node_name)
+                attributes[node_name] = create_rw_attribute(
+                    node, self.event_loop, node_name
+                )
             elif node_class == 4:
                 # A command. Add it to the commands dict.
                 commands[node_name] = self._create_command_function(
@@ -1215,8 +1252,7 @@ class SteeringControlUnit:
         """
         Generate dicts for nodes, attributes, and commands for a given top-level node.
 
-        This function is part of a class and takes the top-level node and an optional
-        name for it as input. It then generates dictionaries for nodes, attributes, and
+        This function generates dictionaries for nodes, attributes, and
         commands based on the structure of the top-level node and returns a tuple
         containing these dictionaries.
 
@@ -1230,7 +1266,7 @@ class SteeringControlUnit:
             "Generating dicts of '%s' node's tree from server. It may take a while...",
             top_level_node_name,
         )
-        nodes, attributes, commands = self.get_sub_nodes(top_level_node)
+        nodes, attributes, commands = self._get_sub_nodes(top_level_node)
         nodes.update({top_level_node_name: (top_level_node, 1)})
         return (
             nodes,
@@ -1259,7 +1295,9 @@ class SteeringControlUnit:
             name: str = node.nodeid.Identifier.split(node_name_separator)[-1]
         except AttributeError:
             name = (
-                asyncio.run_coroutine_threadsafe(node.read_browse_name(), self.event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    node.read_browse_name(), self.event_loop
+                )
                 .result()
                 .Name
             )
@@ -1281,7 +1319,7 @@ class SteeringControlUnit:
         return (node_name, ancestors)
 
     # pylint: disable=unused-argument
-    def get_sub_nodes(
+    def _get_sub_nodes(
         self,
         node: Node,
         node_name_separator: str = ".",
@@ -1321,7 +1359,7 @@ class SteeringControlUnit:
             ).result()
             child_nodes: NodeDict = {}
             for child in children:
-                child_nodes, child_attributes, child_commands = self.get_sub_nodes(
+                child_nodes, child_attributes, child_commands = self._get_sub_nodes(
                     child, parent_names=ancestors
                 )
                 nodes.update(child_nodes)
@@ -1333,7 +1371,9 @@ class SteeringControlUnit:
             #
             # Check if RO or RW and call the respective creator functions.
             # if node.figure_out_if_RW_or_RO is RW:
-            attributes[node_name] = create_rw_attribute(node, self.event_loop, node_name)
+            attributes[node_name] = create_rw_attribute(
+                node, self.event_loop, node_name
+            )
             # else:
             # attributes[node_name] = create_ro_attribute(
             #     node, self.event_loop, node_name
@@ -1345,6 +1385,9 @@ class SteeringControlUnit:
             )
         return nodes, attributes, commands
 
+    # --------------
+    # Getter methods
+    # --------------
     def get_node_list(self) -> list[str]:
         """
         Get a list of node names.
@@ -1377,14 +1420,6 @@ class SteeringControlUnit:
         """
         return self.__get_node_list(self.parameter_nodes)
 
-    def get_parameter_command_list(self) -> list[str]:
-        """
-        Get a list of parameter commands.
-
-        :return: A list of parameter commands.
-        """
-        return self.__get_node_list(self.parameter_commands)
-
     def get_parameter_attribute_list(self) -> list[str]:
         """
         Return a list of parameter attributes.
@@ -1392,30 +1427,6 @@ class SteeringControlUnit:
         :return: A list of parameter attribute names.
         """
         return self.__get_node_list(self.parameter_attributes)
-
-    def get_server_node_list(self) -> list[str]:
-        """
-        Get the list of server nodes.
-
-        :return: A list of server node names.
-        """
-        return self.__get_node_list(self.server_nodes)
-
-    def get_server_command_list(self) -> list[str]:
-        """
-        Get the list of server commands.
-
-        :return: A list of server command strings.
-        """
-        return self.__get_node_list(self.server_commands)
-
-    def get_server_attribute_list(self) -> list[str]:
-        """
-        Get a list of server attributes.
-
-        :return: A list of server attributes.
-        """
-        return self.__get_node_list(self.server_attributes)
 
     def __get_node_list(self, nodes: dict) -> list[str]:
         """
@@ -1447,7 +1458,7 @@ class SteeringControlUnit:
         elif isinstance(attribute, ua.uatypes.NodeId):
             dt_id = attribute
 
-        dt_node = self.client.get_node(dt_id)
+        dt_node = self._client.get_node(dt_id)
         dt_node_info = asyncio.run_coroutine_threadsafe(
             dt_node.read_browse_name(), self.event_loop
         ).result()
@@ -1488,7 +1499,9 @@ class SteeringControlUnit:
         :return: A string indicating the error if fields are out of order.
         """
         enum_name = (
-            asyncio.run_coroutine_threadsafe(enum_node.read_browse_name(), self.event_loop)
+            asyncio.run_coroutine_threadsafe(
+                enum_node.read_browse_name(), self.event_loop
+            )
             .result()
             .Name
         )
@@ -1500,7 +1513,8 @@ class SteeringControlUnit:
             field.Value,
         )
         return (
-            f"ERROR: incorrect index for {field.Name}; expected: {index} " f"actual: {field.Value}"
+            f"ERROR: incorrect index for {field.Name}; expected: {index} "
+            f"actual: {field.Value}"
         )
 
     def get_enum_strings(self, enum_node: str | ua.uatypes.NodeId) -> list[str]:
@@ -1519,7 +1533,7 @@ class SteeringControlUnit:
         elif isinstance(enum_node, ua.uatypes.NodeId):
             dt_id = enum_node
 
-        dt_node = self.client.get_node(dt_id)
+        dt_node = self._client.get_node(dt_id)
         dt_node_def = asyncio.run_coroutine_threadsafe(
             dt_node.read_data_type_definition(), self.event_loop
         ).result()
@@ -1542,7 +1556,9 @@ class SteeringControlUnit:
         """
 
         async def get_descriptions() -> list[str]:
-            coroutines = [self.nodes[nm].read_description() for nm in node_list]  # type: ignore
+            coroutines = [
+                self.nodes[nm].read_description() for nm in node_list  # type: ignore
+            ]
             return await asyncio.gather(*coroutines)
 
         descriptions = asyncio.run_coroutine_threadsafe(
@@ -1553,6 +1569,9 @@ class SteeringControlUnit:
         result = list(zip(node_list, descriptions))
         return result
 
+    # --------------------
+    # OPC-UA subscriptions
+    # --------------------
     # pylint: disable=dangerous-default-value
     def subscribe(
         self,
@@ -1574,9 +1593,9 @@ class SteeringControlUnit:
             status notification is received, defaults to None.
         """
         if data_queue is None:
-            data_queue = self.subscription_queue
+            data_queue = self._subscription_queue
         subscription_handler = SubscriptionHandler(
-            data_queue, self.nodes_reversed, bad_shutdown_callback
+            data_queue, self._nodes_reversed, bad_shutdown_callback
         )
         if not isinstance(attributes, list):
             attributes = [
@@ -1597,7 +1616,7 @@ class SteeringControlUnit:
                 missing_nodes,
             )
         subscription = asyncio.run_coroutine_threadsafe(
-            self.client.create_subscription(period, subscription_handler),
+            self._client.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
         handles = []
@@ -1610,10 +1629,12 @@ class SteeringControlUnit:
                 handles.append(handle)
             except Exception as e:
                 msg = f"Failed to subscribe to node '{node.nodeid.to_string()}'"
-                asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), self.event_loop
+                )
                 bad_nodes.add(node)
         uid = time.monotonic_ns()
-        self.subscriptions[uid] = {
+        self._subscriptions[uid] = {
             "handles": handles,
             "nodes": nodes - bad_nodes,
             "subscription": subscription,
@@ -1626,15 +1647,15 @@ class SteeringControlUnit:
 
         :param uid: The ID of the user to unsubscribe.
         """
-        subscription = self.subscriptions.pop(uid)
+        subscription = self._subscriptions.pop(uid)
         _ = asyncio.run_coroutine_threadsafe(
             subscription["subscription"].delete(), self.event_loop
         ).result()
 
     def unsubscribe_all(self) -> None:
         """Unsubscribe all subscriptions."""
-        while len(self.subscriptions) > 0:
-            _, subscription = self.subscriptions.popitem()
+        while len(self._subscriptions) > 0:
+            _, subscription = self._subscriptions.popitem()
             _ = asyncio.run_coroutine_threadsafe(
                 subscription["subscription"].delete(), self.event_loop
             ).result()
@@ -1647,10 +1668,13 @@ class SteeringControlUnit:
             queue.
         """
         values = []
-        while not self.subscription_queue.empty():
-            values.append(self.subscription_queue.get(block=False, timeout=0.1))
+        while not self._subscription_queue.empty():
+            values.append(self._subscription_queue.get(block=False, timeout=0.1))
         return values
 
+    # -------------
+    # Dish tracking
+    # -------------
     def load_track_table(
         self,
         mode: str | int = 0,
@@ -1697,11 +1721,14 @@ class SteeringControlUnit:
             return ResultCode.NOT_EXECUTED, msg
 
         mode_int = (
-            self.convert_enum_to_int("LoadModeType", mode) if isinstance(mode, str) else mode
+            self.convert_enum_to_int("LoadModeType", mode)
+            if isinstance(mode, str)
+            else mode
         )
         if file_name is not None and mode_int == 0 and not absolute_times:
             msg = (
-                "Cannot append a track table file with relative times. Please " "use mode 1: 'New'"
+                "Cannot append a track table file with relative times. Please "
+                "use mode 1: 'New'"
             )
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
@@ -1710,7 +1737,9 @@ class SteeringControlUnit:
         if not absolute_times:
             table_args.append(additional_offset)
             table_args.append(
-                self.attributes["Time_cds.Status.TAIoffset"].value  # type: ignore[attr-defined]
+                self.attributes[
+                    "Time_cds.Status.TAIoffset"
+                ].value  # type: ignore[attr-defined]
             )
         track_table = TrackTable(*table_args)
 
@@ -1724,17 +1753,17 @@ class SteeringControlUnit:
             return ResultCode.NOT_EXECUTED, msg
 
         if mode_int == 1:  # New track table queue
-            if self.stop_track_table_schedule_task_event is not None:
-                self.stop_track_table_schedule_task_event.set()
+            if self._stop_track_table_schedule_task_event is not None:
+                self._stop_track_table_schedule_task_event.set()
 
-            self.track_table_queue = None
-            self.track_table_scheduled_task = None
-            self.track_table = None
+            self._track_table_queue = None
+            self._track_table_scheduled_task = None
+            self._track_table = None
 
-        if self.track_table_queue is None:
-            self.track_table_queue = queue.Queue()
+        if self._track_table_queue is None:
+            self._track_table_queue = queue.Queue()
 
-        self.track_table_queue.put(
+        self._track_table_queue.put(
             {
                 "track_table": track_table,
                 "mode": mode_int,
@@ -1743,24 +1772,27 @@ class SteeringControlUnit:
         )
         # Rely on scheduled track table task to send appended values if it is still
         # running (inadequate space on PLC to load all stored points).
-        if self.track_table_scheduled_task is None or self.track_table_scheduled_task.done():
+        if (
+            self._track_table_scheduled_task is None
+            or self._track_table_scheduled_task.done()
+        ):
             return self._load_track_table_to_plc()
 
-        return (ResultCode.EXECUTING, "Track table queued.")
+        return ResultCode.EXECUTING, "Track table queued."
 
     def _load_track_table_to_plc(self) -> tuple[ResultCode, str]:
         first_load = threading.Event()
         stop_scheduling = threading.Event()
-        self.track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
+        self._track_table_scheduled_task = asyncio.run_coroutine_threadsafe(
             self._schedule_load_next_points(first_load, stop_scheduling),
             self.event_loop,
         )
-        self.stop_track_table_schedule_task_event = stop_scheduling
+        self._stop_track_table_schedule_task_event = stop_scheduling
         if not first_load.wait(3):
             stop_scheduling.set()
             table_info = ""
-            if self.track_table:
-                table_info = " " + self.track_table.get_details_string()
+            if self._track_table:
+                table_info = " " + self._track_table.get_details_string()
 
             msg = f"Timed out while loading first batch of track table{table_info}."
             logger.error(msg)
@@ -1768,7 +1800,7 @@ class SteeringControlUnit:
 
         return (
             ResultCode.EXECUTING,
-            f"First batch of {len(self.track_table.tai)} track table points loaded "
+            f"First batch of {len(self._track_table.tai)} track table points loaded "
             f"successfully. Continuing with loading...",
         )
 
@@ -1777,8 +1809,8 @@ class SteeringControlUnit:
         first_load: threading.Event,
         stop_scheduling: threading.Event,
     ) -> None:
-        table_kwargs = self.track_table_queue.get(block=False)
-        self.track_table = table_kwargs["track_table"]
+        table_kwargs = self._track_table_queue.get(block=False)
+        self._track_table = table_kwargs["track_table"]
         mode = table_kwargs["mode"]
         result_callback = table_kwargs["result_callback"]
         # One call in case mode is "New"
@@ -1798,8 +1830,8 @@ class SteeringControlUnit:
             ):
                 msg = (
                     f"Failed to load all points to PLC. Reason: {result_msg}. "
-                    f"{self.track_table.remaining_points()} remaining from "
-                    f"{self.track_table.get_details_string()}."
+                    f"{self._track_table.remaining_points()} remaining from "
+                    f"{self._track_table.get_details_string()}."
                 )
                 logger.error(msg)
                 result_callback(result_code, msg)
@@ -1816,7 +1848,7 @@ class SteeringControlUnit:
                     result_callback(
                         result_code,
                         "PLC track table full after loading "
-                        f"{self.track_table.num_loaded_batches} batches. Waiting "
+                        f"{self._track_table.num_loaded_batches} batches. Waiting "
                         f"{sleep_length} seconds for loaded points to be consumed...",
                     )
                 await asyncio.sleep(sleep_length)
@@ -1826,27 +1858,29 @@ class SteeringControlUnit:
                     result_callback(result_code, result_msg)
 
                 try:
-                    table_kwargs = self.track_table_queue.get(block=False)
+                    table_kwargs = self._track_table_queue.get(block=False)
                 except queue.Empty:
-                    result_msg = "Finished loading all queued track table points to the PLC."
+                    result_msg = (
+                        "Finished loading all queued track table points to the PLC."
+                    )
                     break
 
-                self.track_table = table_kwargs["track_table"]
+                self._track_table = table_kwargs["track_table"]
                 result_callback = table_kwargs["result_callback"]
 
             result_code, result_msg = await self._load_next_points()
         logger.debug("Async track table loading: %s", result_msg)
 
     async def _load_next_points(self, mode: int = 0) -> tuple[ResultCode, str]:
-        num, tai, azi, ele = self.track_table.get_next_points(1000)
+        num, tai, azi, ele = self._track_table.get_next_points(1000)
         logger.debug(f"_load_next_points got {num} points")
 
         if num == 0:
             return (
                 ResultCode.ENTIRE_TRACK_TABLE_LOADED,
-                f"Finished loading track table {self.track_table.get_details_string()} "
-                f"to the PLC. {self.track_table.sent_index} points have been sent in "
-                f"{self.track_table.num_loaded_batches} batches.",
+                f"Finished loading track table {self._track_table.get_details_string()}"
+                f" to the PLC. {self._track_table.sent_index} points have been sent in "
+                f"{self._track_table.num_loaded_batches} batches.",
             )
 
         # The TrackLoadTable node accepts arrays of length 1000 only.
@@ -1860,7 +1894,7 @@ class SteeringControlUnit:
             return (
                 ResultCode.NOT_EXECUTED,
                 "Lost authority while loading track table "
-                f"{self.track_table.get_details_string()}.",
+                f"{self._track_table.get_details_string()}.",
             )
 
         # Call TrackLoadTable command and validate result code
@@ -1880,9 +1914,9 @@ class SteeringControlUnit:
             ResultCode.COMMAND_ACTIVATED,
         ):
             # Failed to send points so restore index.
-            self.track_table.sent_index -= num
+            self._track_table.sent_index -= num
         else:
-            self.track_table.num_loaded_batches += 1
+            self._track_table.num_loaded_batches += 1
 
         return result_code, result_msg
 
@@ -1916,7 +1950,9 @@ class SteeringControlUnit:
         )
         return code, msg
 
-    # commands to DMC state - dish management controller
+    # ---------------------------
+    # Convenience command methods
+    # ---------------------------
     def interlock_acknowledge_dmc(self) -> CmdReturn:
         """
         Acknowledge the interlock status for the DMC.
@@ -1994,7 +2030,6 @@ class SteeringControlUnit:
             az_angle, el_angle, az_velocity, el_velocity
         )
 
-    # commands to ACU
     def stow(self) -> CmdReturn:
         """
         Stow the dish.
@@ -2128,6 +2163,7 @@ def SCU(  # noqa: N802
     password: str | None = None,
     timeout: float = 10.0,
     use_nodes_cache: bool = False,
+    nodes_cache_dir: Path = USER_CACHE_DIR,
     authority_name: str | None = None,
 ) -> SteeringControlUnit:
     """SCU object generator method.
@@ -2146,6 +2182,7 @@ def SCU(  # noqa: N802
         password=password,
         timeout=timeout,
         use_nodes_cache=use_nodes_cache,
+        nodes_cache_dir=nodes_cache_dir,
     )
     scu.connect_and_setup()
     if authority_name is not None:

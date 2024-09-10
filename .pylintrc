@@ -1,0 +1,14 @@
+[MAIN]
+; ignore=
+
+[FORMAT]
+max-line-length = 88
+
+[MESSAGES CONTROL]
+disable=
+    fixme,
+    logging-fstring-interpolation
+
+[SIMILARITIES]
+min-similarity-lines=7
+ignore-imports=yes

@@ -1,0 +1,12 @@
+[flake8]
+# exclude = 
+max-line-length = 88
+
+# See https://github.com/PyCQA/pycodestyle/issues/373
+# docstring summary imperative mood
+extend-ignore = E203,
+    D401,
+    
+docstring-style = sphinx
+rst-roles = py:attr, py:class, py:const, py:exc, py:func, py:meth, py:mod
+rst-directives = literalinclude, uml

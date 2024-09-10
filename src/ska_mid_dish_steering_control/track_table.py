@@ -1,11 +1,9 @@
-# flake8: noqa:E203
-# pylint: disable=invalid-name
 """Track table for Steering Control Unit (SCU) module."""
 
 import logging
 import threading
 
-logger = logging.getLogger("ska-dish-steering-control")
+logger = logging.getLogger("ska-mid-ds-scu")
 
 
 # pylint: disable=too-many-instance-attributes
@@ -79,7 +77,9 @@ class TrackTable:
                         raise IndexError(2) from e
 
                     if len(cleaned_line) > 3:
-                        raise ValueError(f"Malformed CSV file, line {current_line} is too long.")
+                        raise ValueError(
+                            f"Malformed CSV file, line {current_line} is too long."
+                        )
 
                     current_line += 1
         except IndexError as e:
@@ -146,7 +146,9 @@ class TrackTable:
                 # Stored times are relative to tai_offset
                 tai = [
                     tai_string + self.tai_offset + self.additional_offset
-                    for tai_string in self.tai[self.sent_index : self.sent_index + num_points]
+                    for tai_string in self.tai[
+                        self.sent_index : self.sent_index + num_points
+                    ]
                 ]
 
             azi = self.azi[self.sent_index : self.sent_index + num_points]
@@ -184,9 +186,9 @@ class TrackTable:
                     "list starting at time:azimuth:elevation "
                     f"{self.tai[0]}:{self.azi[0]}:{self.ele[0]} "
                     "and ending at time:azimuth:elevation "
-                    f"{self.tai[len(self.tai)]}:"
-                    f"{self.azi[len(self.tai)]}:"
-                    f"{self.ele[len(self.tai)]}"
+                    f"{self.tai[-1]}:"
+                    f"{self.azi[-1]}:"
+                    f"{self.ele[-1]}"
                 )
 
         return f"file: {self.file_name}"
