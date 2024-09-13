@@ -14,7 +14,7 @@ overwritten by specifying the named parameter:
 
 .. code-block:: python
 
-    from disq import SCU
+    from ska_mid_dish_steering_control import SCU
     scu = SCU(
         host="localhost",
         port=4840,
@@ -31,7 +31,7 @@ manager without calling the teardown method explicitly:
 
 .. code-block:: python
 
-    from disq import SteeringControlUnit
+    from ska_mid_dish_steering_control import SteeringControlUnit
     with SteeringControlUnit(host="localhost") as scu:
         scu.take_authority("LMC")
 
@@ -72,7 +72,7 @@ from the OPC UA server to the correct base integer type:
 
 .. code-block:: python
 
-    from disq import Command
+    from ska_mid_dish_steering_control.constants import Command
     axis = scu.convert_enum_to_int("AxisSelectType", "Az")
     result = scu.commands[Command.ACTIVATE.value](axis)
 
@@ -101,6 +101,7 @@ In case an attribute is not writeable, the OPC UA server will report an error:
 
 `*** Exception caught: User does not have permission to perform the requested operation.
 (BadUserAccessDenied)`
+
 """
 
 # pylint: disable=too-many-lines, broad-exception-caught
