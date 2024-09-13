@@ -1381,7 +1381,10 @@ class SteeringControlUnit:
         elif node_class == 4:
             # A command. Add it to the commands dict.
             commands[node_name] = self._create_command_function(
-                node, self.event_loop, node_name, node_name != Command.TAKE_AUTH.value
+                node,
+                self.event_loop,
+                node_name,
+                node_name != Command.TAKE_AUTH.value,
             )
         return nodes, attributes, commands
 
@@ -1438,18 +1441,21 @@ class SteeringControlUnit:
         logger.debug("\n".join(nodes.keys()))
         return list(nodes.keys())
 
-    def get_attribute_data_type(self, attribute: str | ua.uatypes.NodeId) -> str:
+    def get_attribute_data_type(self, attribute: str | ua.uatypes.NodeId) -> list[str]:
         """
         Get the data type for the given node.
 
-        Returns string for the type or "Unknown" for a not yet known type.
+        Returns a list of strings for the type or "Unknown" for a not yet known type.
+        For most types the list is length one, for enumeration types the list is
+        "Enumeration" followed by the strings of the enumeration, where the index of the
+        string in the list is the enum value + 1.
         """
         dt_id = ""
         if isinstance(attribute, str):
             if attribute == "Pointing.Status.CurrentPointing":
                 # Special case where the ICD type is Double but the node actually
                 # returns a 7-element array.
-                return attribute
+                return [attribute]
 
             node, _ = self.nodes[attribute]
             dt_id = asyncio.run_coroutine_threadsafe(
@@ -1474,78 +1480,24 @@ class SteeringControlUnit:
             "UInt32",
         ]
         if dt_name in instant_types:
-            return dt_name
+            return [dt_name]
 
         # load_data_type_definitions() called in connect() adds new classes to the
         # asyncua.ua module.
-        if dt_name in dir(ua):
-            if issubclass(getattr(ua, dt_name), enum.Enum):
-                return "Enumeration"
+        try:
+            ua_type = getattr(ua, dt_name)
+        except AttributeError:
+            pass
+        else:
+            if issubclass(ua_type, enum.Enum):
+                enum_list = [""] * (max(e.value for e in ua_type) + 1)
+                for e in ua_type:
+                    enum_list[e.value] = e.name
 
-        return "Unknown"
+                enum_list.insert(0, "Enumeration")
+                return enum_list
 
-    def _enum_fields_out_of_order(
-        self,
-        index: int,
-        field: ua.uaprotocol_auto.EnumField,
-        enum_node: ua.uatypes.NodeId,
-    ) -> str:
-        """
-        Check if the fields of an enumeration are out of order.
-
-        :param index: The expected index of the field.
-        :param field: The enumeration field to be checked.
-        :param enum_node: The NodeId of the enumeration.
-        :return: A string indicating the error if fields are out of order.
-        """
-        enum_name = (
-            asyncio.run_coroutine_threadsafe(
-                enum_node.read_browse_name(), self.event_loop
-            )
-            .result()
-            .Name
-        )
-        logger.error(
-            "Incorrect index for field %s of enumeration %s. Expected: %d, actual: %d",
-            field.Name,
-            enum_name,
-            index,
-            field.Value,
-        )
-        return (
-            f"ERROR: incorrect index for {field.Name}; expected: {index} "
-            f"actual: {field.Value}"
-        )
-
-    def get_enum_strings(self, enum_node: str | ua.uatypes.NodeId) -> list[str]:
-        """
-        Get list of enum strings where the index of the list matches the enum value.
-
-        enum_node MUST be the name of an Enumeration type node (see
-        get_attribute_data_type()).
-        """
-        dt_id = ""
-        if isinstance(enum_node, str):
-            node, _ = self.nodes[enum_node]
-            dt_id = asyncio.run_coroutine_threadsafe(
-                node.read_data_type(), self.event_loop
-            ).result()
-        elif isinstance(enum_node, ua.uatypes.NodeId):
-            dt_id = enum_node
-
-        dt_node = self._client.get_node(dt_id)
-        dt_node_def = asyncio.run_coroutine_threadsafe(
-            dt_node.read_data_type_definition(), self.event_loop
-        ).result()
-
-        return [
-            (
-                field.Name
-                if field.Value == index
-                else self._enum_fields_out_of_order(index, field, dt_node)
-            )
-            for index, field in enumerate(dt_node_def.Fields)
-        ]
+        return ["Unknown"]
 
     def get_node_descriptions(self, node_list: list[str]) -> list[tuple[str, str]]:
         """
