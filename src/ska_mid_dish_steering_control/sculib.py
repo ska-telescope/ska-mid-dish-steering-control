@@ -14,7 +14,7 @@ overwritten by specifying the named parameter:
 
 .. code-block:: python
 
-    from disq import SCU
+    from ska_mid_dish_steering_control import SCU
     scu = SCU(
         host="localhost",
         port=4840,
@@ -31,7 +31,7 @@ manager without calling the teardown method explicitly:
 
 .. code-block:: python
 
-    from disq import SteeringControlUnit
+    from ska_mid_dish_steering_control import SteeringControlUnit
     with SteeringControlUnit(host="localhost") as scu:
         scu.take_authority("LMC")
 
@@ -72,7 +72,7 @@ from the OPC UA server to the correct base integer type:
 
 .. code-block:: python
 
-    from disq import Command
+    from ska_mid_dish_steering_control.constants import Command
     axis = scu.convert_enum_to_int("AxisSelectType", "Az")
     result = scu.commands[Command.ACTIVATE.value](axis)
 
@@ -101,6 +101,26 @@ In case an attribute is not writeable, the OPC UA server will report an error:
 
 `*** Exception caught: User does not have permission to perform the requested operation.
 (BadUserAccessDenied)`
+
+You can subscribe to a single OPC UA node using the subscribe() method and use a 
+separate thread to monitor events being added to a queue:
+
+    import queue
+    attr_monit_queue = queue.Queue()
+    scu.subscribe("Management.Status.DscState", 100, attr_monit_queue)
+
+    # Example of monitoring events added to the queue
+    try:
+        while True:
+            data = attr_monit_queue.get(timeout=20)  # Wait for data for 20 seconds
+            print(f"Received data: {data}")
+    except queue.Empty:
+        print("No data received within 20 seconds.")
+
+To subscribe to multiple OPC UA nodes, Pass a list instead of string. eg
+
+    scu.subscribe(["Management.Status.DscState", "Safety.Status.StowPinStatus"],100,attr_monit_queue)
+
 """
 
 # pylint: disable=too-many-lines, broad-exception-caught

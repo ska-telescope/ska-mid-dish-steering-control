@@ -12,15 +12,16 @@ object generator method. It creates an instance, connects to the server, and can
 take command authority immediately. Provided here are some of the defaults which can be
 overwritten by specifying the named parameter:
 
-    from ska_dish_steering_control import SteeringControlUnit
+    from ska_mid_dish_steering_control import SteeringControlUnit
     scu = SteeringControlUnit(
         host="localhost",
         port=4840,
         endpoint="",
         namespace="",
         timeout=10.0,
-        authority_name="LMC", # Default is None - then take_authority() must be used.
     )
+    scu.connect_and_setup()
+    scu.take_authority("LMC") # Use the authority of your choice
     # Do things with the scu instance..
     scu.disconnect_and_cleanup()
 
@@ -51,7 +52,7 @@ calling a command is really simple:
 You can also use the ``Command`` enum, as well as the helper method for converting types
 from the OPC UA server to the correct base integer type:
 
-    from disq import Command
+    from ska_mid_dish_steering_control.constants import Command
     axis = scu.convert_enum_to_int("AxisSelectType", "Az")
     result = scu.commands[Command.ACTIVATE.value](axis)
 
@@ -73,3 +74,22 @@ In case an attribute is not writeable, the OPC UA server will report an error:
 
 `*** Exception caught: User does not have permission to perform the requested operation.
 (BadUserAccessDenied)`
+
+You can subscribe to a single OPC UA node using the subscribe() method and use a 
+separate thread to monitor events being added to a queue:
+
+    import queue
+    attr_monit_queue = queue.Queue()
+    scu.subscribe("Management.Status.DscState", 100, attr_monit_queue)
+
+    # Example of monitoring events added to the queue
+    try:
+        while True:
+            data = attr_monit_queue.get(timeout=20)  # Wait for data for 20 seconds
+            print(f"Received data: {data}")
+    except queue.Empty:
+        print("No data received within 20 seconds.")
+
+To subscribe to multiple OPC UA nodes, Pass a list instead of string. eg
+
+    scu.subscribe(["Management.Status.DscState", "Safety.Status.StowPinStatus"],100,attr_monit_queue)
