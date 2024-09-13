@@ -112,10 +112,10 @@ separate thread to monitor events being added to a queue:
     # Example of monitoring events added to the queue
     try:
         while True:
-            data = attr_monit_queue.get(timeout=20)  # Wait for data for 20 seconds
+            data = attr_monit_queue.get(timeout=30)  # Wait for data for 30 seconds
             print(f"Received data: {data}")
     except queue.Empty:
-        print("No data received within 20 seconds.")
+        print("No data received within 30 seconds.")
 
 To subscribe to multiple OPC UA nodes, Pass a list instead of string. eg
 
