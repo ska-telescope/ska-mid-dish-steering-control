@@ -57,6 +57,8 @@ class NamePlate(Enum):
     TOTAL_DIST_EL_DEG = "Management.NamePlate.TotalDist_El_deg"
     TOTAL_DIST_EL_M = "Management.NamePlate.TotalDist_El_m"
     TOTAL_DIST_FI = "Management.NamePlate.TotalDist_Fi"
+    TILTMETER_ONE_SERIAL_NO = "Pointing.TiltmeterParameters.One.Tiltmeter_serial_no"
+    TILTMETER_TWO_SERIAL_NO = "Pointing.TiltmeterParameters.Two.Tiltmeter_serial_no"
 
 
 class ResultCode(IntEnum):
