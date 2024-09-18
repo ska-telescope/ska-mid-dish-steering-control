@@ -1554,12 +1554,12 @@ class SteeringControlUnit:
             attributes = [
                 attributes,
             ]
-        nodes: set[Node] = set()
+        nodes = []
         missing_nodes = []
         for attribute in attributes:
             if attribute != "":
                 if attribute in self.nodes:
-                    nodes.add(self.nodes[attribute][0])
+                    nodes.append(self.nodes[attribute][0])
                 else:
                     missing_nodes.append(attribute)
         if len(missing_nodes) > 0:
@@ -1572,27 +1572,42 @@ class SteeringControlUnit:
             self._client.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
-        handles = []
-        bad_nodes = set()
-        for node in nodes:
-            try:
-                handle = asyncio.run_coroutine_threadsafe(
-                    subscription.subscribe_data_change(node), self.event_loop
-                ).result()
-                handles.append(handle)
-            except Exception as e:
-                msg = f"Failed to subscribe to node '{node.nodeid.to_string()}'"
-                asyncio.run_coroutine_threadsafe(
-                    handle_exception(e, msg), self.event_loop
-                )
-                bad_nodes.add(node)
+        subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
+        bad_nodes = []
+        try:
+            handles = asyncio.run_coroutine_threadsafe(
+                subscription.subscribe_data_change(subscribe_nodes), self.event_loop
+            ).result()
+        except ua.UaStatusCodeError as e:
+            # Exceptions are only generated when subscribe_data_change is called with a
+            # single node input.
+            msg = (
+                f"Failed to subscribe to node '{subscribe_nodes[0].nodeid.to_string()}'"
+            )
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            bad_nodes.append(subscribe_nodes[0])
+            subscribe_nodes.pop(0)
+
+        # subscribe_data_change returns an int for a single node, and a list for
+        # mulitple nodes
+        if isinstance(handles, int):
+            handles = list(handles)
+        # The list contains ints for sucessful subscriptions, and status codes when
+        # the subscription has failed.
+        else:
+            for i, node in enumerate(subscribe_nodes):
+                if isinstance(handles[i], ua.uatypes.StatusCode):
+                    bad_nodes.append(node)
+                    subscribe_nodes.pop(i)
+                    handles.pop(i)
+
         uid = time.monotonic_ns()
         self._subscriptions[uid] = {
             "handles": handles,
-            "nodes": nodes - bad_nodes,
+            "nodes": subscribe_nodes,
             "subscription": subscription,
         }
-        return uid, missing_nodes, list(bad_nodes)
+        return uid, missing_nodes, bad_nodes
 
     def unsubscribe(self, uid: int) -> None:
         """
