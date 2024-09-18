@@ -1572,7 +1572,7 @@ class SteeringControlUnit:
             self._client.create_subscription(period, subscription_handler),
             self.event_loop,
         ).result()
-        subscribe_nodes = list(set(nodes))
+        subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
         bad_nodes = []
         try:
             handles = asyncio.run_coroutine_threadsafe(
