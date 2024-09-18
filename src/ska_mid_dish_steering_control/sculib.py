@@ -1525,7 +1525,7 @@ class SteeringControlUnit:
     # --------------------
     # OPC-UA subscriptions
     # --------------------
-    # pylint: disable=dangerous-default-value,too-many-branches
+    # pylint: disable=dangerous-default-value
     def subscribe(
         self,
         attributes: str | list[str],
@@ -1578,7 +1578,7 @@ class SteeringControlUnit:
             handles = asyncio.run_coroutine_threadsafe(
                 subscription.subscribe_data_change(subscribe_nodes), self.event_loop
             ).result()
-        except Exception as e:
+        except ua.UaStatusCodeError as e:
             # Exceptions are only generated when subscribe_data_change is called with a
             # single node input.
             msg = (
@@ -1587,19 +1587,19 @@ class SteeringControlUnit:
             asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
             bad_nodes.append(subscribe_nodes[0])
             subscribe_nodes.pop(0)
+
+        # subscribe_data_change returns an int for a single node, and a list for
+        # mulitple nodes
+        if isinstance(handles, int):
+            handles = list(handles)
+        # The list contains ints for sucessful subscriptions, and status codes when
+        # the subscription has failed.
         else:
-            # subscribe_data_change returns an int for a single node, and a list for
-            # mulitple nodes
-            if isinstance(handles, int):
-                handles = list(handles)
-            # The list contains ints for sucessful subscriptions, and status codes when
-            # the subscription has failed.
-            else:
-                for i, node in enumerate(subscribe_nodes):
-                    if isinstance(handles[i], ua.uatypes.StatusCode):
-                        bad_nodes.append(node)
-                        subscribe_nodes.pop(i)
-                        handles.pop(i)
+            for i, node in enumerate(subscribe_nodes):
+                if isinstance(handles[i], ua.uatypes.StatusCode):
+                    bad_nodes.append(node)
+                    subscribe_nodes.pop(i)
+                    handles.pop(i)
 
         uid = time.monotonic_ns()
         self._subscriptions[uid] = {
