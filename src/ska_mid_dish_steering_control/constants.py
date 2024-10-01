@@ -32,6 +32,7 @@ class Command(Enum):
     SLEW2ABS_SINGLE_AX = "Management.Commands.Slew2AbsSingleAx"
     STOP = "Management.Commands.Stop"
     STOW = "Management.Commands.Stow"
+    SET_POWER_MODE = "Management.Commands.SetPowerMode"
     AMBTEMP_CORR_SETUP = "Pointing.Commands.AmbTempCorrSetup"
     PM_CORR_ON_OFF = "Pointing.Commands.PmCorrOnOff"
     STATIC_PM_SETUP = "Pointing.Commands.StaticPmSetup"

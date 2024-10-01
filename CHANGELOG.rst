@@ -6,6 +6,7 @@ Unreleased
 - Non-breaking changes:
     - WOM-479: Updated ``get_attribute_data_type()`` to fix exceptions in DiSQ.
     - WOM-484: Updated ``subscribe()`` to subscribe to all input nodes in one OPCUA call.
+    - WOM-446: Added SET_POWER_MODE to the Command enum.
 - Documentation:
     - KAR-1198: Updated 'How to use SCU'.
 
