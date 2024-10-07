@@ -403,6 +403,7 @@ class SteeringControlUnit:
         self._track_table_scheduled_task: Future | None = None
         self._track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[Enum]] = {}
+        self._local_time: Node
 
     def connect_and_setup(self) -> None:
         """
@@ -444,6 +445,7 @@ class SteeringControlUnit:
                 )
         self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
+        self._local_time = self._client.get_node("ns=0;i=2258")  # ID part of OPCUA spec
         logger.info("Successfully connected to server and initialised SCU client")
 
     def __enter__(self) -> "SteeringControlUnit":
@@ -802,6 +804,28 @@ class SteeringControlUnit:
                 "as expected: %s",
                 str(missing_types),
             )
+
+    @property
+    def local_time(self) -> str | None:
+        """
+        Local (current) time of the OPC-UA server.
+
+        :return: Returns the value of the Server -> ServerStatus -> CurrentTime node
+            if the client is connected and can read it succesfully, otherwise None.
+        """
+        if self._client is not None:
+            try:
+                return asyncio.run_coroutine_threadsafe(
+                    self._local_time.read_value(), self.event_loop
+                ).result()
+            except ua.UaError as e:  # Base asyncua exception
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(
+                        e, f"Failed to read CurrentTime node ({self._local_time})"
+                    ),
+                    self.event_loop,
+                )
+        return None
 
     # ----------------------
     # Command user authority
