@@ -390,7 +390,7 @@ class SteeringControlUnit:
         self._plc_prg: Node
         self._ns_idx: int
         self._nodes: NodeDict
-        self._nodes_reversed: dict[tuple[Node, int], str]
+        self._nodes_reversed: dict[Node, str]
         self._attributes: AttrDict
         self._commands: CmdDict
         self._plc_prg_nodes_timestamp: str
@@ -446,6 +446,8 @@ class SteeringControlUnit:
         self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
         self._local_time = self._client.get_node("ns=0;i=2258")  # ID part of OPCUA spec
+        self._nodes["ServerStatus.CurrentTime"] = (self._local_time, 2)
+        self._nodes_reversed[self._local_time] = "ServerStatus.CurrentTime"
         logger.info("Successfully connected to server and initialised SCU client")
 
     def __enter__(self) -> "SteeringControlUnit":
