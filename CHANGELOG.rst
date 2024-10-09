@@ -7,7 +7,7 @@ Unreleased
     - WOM-479: Updated ``get_attribute_data_type()`` to fix exceptions in DiSQ.
     - WOM-484: Updated ``subscribe()`` to subscribe to all input nodes in one OPCUA call.
     - WOM-446, WOM-464: Added missing commands to the ``Command`` enum.
-    - WOM-464: Added ``local_time`` property that returns server's CurrentTime node value.
+    - WOM-464: Added ``ServerStatus.CurrentTime`` key to ``nodes`` and ``attributes`` properties that reads the server's local time.
 - Documentation:
     - KAR-1198: Updated 'How to use SCU'.
 
