@@ -120,7 +120,7 @@ from enum import Enum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable, Final, Type, TypedDict
+from typing import Any, Callable, Final, Protocol, Type, TypedDict
 
 from asyncua import Client, Node, ua
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
@@ -150,9 +150,39 @@ async def handle_exception(e: Exception, msg: str = "") -> None:
         logger.error("*** Exception caught: %s [context: %s]", e, msg)
 
 
+class ROAttribute(Protocol):  # noqa: D101
+    """Protocol type for an OPC UA read-only attribute."""
+
+    # pylint: disable=missing-function-docstring
+    @property
+    def ua_node(self) -> Node:  # noqa: D102
+        pass
+
+    @property
+    def value(self) -> Any:  # noqa: D102
+        pass
+
+
+class RWAttribute(Protocol):  # noqa: D101
+    """Protocol type for an OPC UA read-write attribute."""
+
+    # pylint: disable=missing-function-docstring
+    @property
+    def ua_node(self) -> Node:  # noqa: D102
+        pass
+
+    @property
+    def value(self) -> Any:  # noqa: D102
+        pass
+
+    @value.setter
+    def value(self, value: Any) -> None:
+        pass
+
+
 def create_rw_attribute(
     node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
-) -> object:
+) -> RWAttribute:
     """
     Create a read-write attribute for an OPC UA node.
 
@@ -201,7 +231,7 @@ def create_rw_attribute(
 
 def create_ro_attribute(
     node: Node, event_loop: asyncio.AbstractEventLoop, node_name: str
-) -> object:
+) -> ROAttribute:
     """
     Create a read-only attribute for an OPC UA Node.
 
@@ -310,7 +340,7 @@ class CachedNodesDict(TypedDict):
 
 # Type aliases
 NodeDict = dict[str, tuple[Node, int]]
-AttrDict = dict[str, object]
+AttrDict = dict[str, ROAttribute | RWAttribute]
 CmdDict = dict[str, Callable[..., CmdReturn]]
 
 
@@ -390,7 +420,7 @@ class SteeringControlUnit:
         self._plc_prg: Node
         self._ns_idx: int
         self._nodes: NodeDict
-        self._nodes_reversed: dict[tuple[Node, int], str]
+        self._nodes_reversed: dict[Node, str]
         self._attributes: AttrDict
         self._commands: CmdDict
         self._plc_prg_nodes_timestamp: str
@@ -444,6 +474,13 @@ class SteeringControlUnit:
                 )
         self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
+        # Add CurrentTime node to dicts (not in PLC_PRG tree)
+        current_time_node = self._client.get_node("ns=0;i=2258")
+        self._nodes["ServerStatus.CurrentTime"] = (current_time_node, 2)
+        self._nodes_reversed[current_time_node] = "ServerStatus.CurrentTime"
+        self._attributes["ServerStatus.CurrentTime"] = create_ro_attribute(
+            current_time_node, self.event_loop, "ServerStatus.CurrentTime"
+        )
         logger.info("Successfully connected to server and initialised SCU client")
 
     def __enter__(self) -> "SteeringControlUnit":
@@ -706,13 +743,21 @@ class SteeringControlUnit:
 
     @property
     def nodes(self) -> NodeDict:
-        """Dictionary of the 'PLC_PRG' node's entire tree of `asyncua.Node` objects."""
+        """
+        Dictionary of the 'PLC_PRG' node's entire tree of `asyncua.Node` objects.
+
+        Also contains the 'ServerStatus.CurrentTime' key with the
+        Server -> ServerStatus -> CurrentTime node.
+        """
         return self._nodes
 
     @property
     def attributes(self) -> AttrDict:
         """
         Dictionary containing the attributes in the 'PLC_PRG' node tree.
+
+        Also contains the 'ServerStatus.CurrentTime' key with the
+        Server -> ServerStatus -> CurrentTime node as a RO attribute.
 
         The values are callables that return the current value.
         """
@@ -1221,9 +1266,9 @@ class SteeringControlUnit:
             top_level_node_name,
             self._nodes_cache_dir,
         )
-        nodes = {}
-        attributes = {}
-        commands = {}
+        nodes: NodeDict = {}
+        attributes: AttrDict = {}
+        commands: CmdDict = {}
         for node_name, tup in cache_dict.items():
             node_id, node_class = tup
             node = self._client.get_node(node_id)

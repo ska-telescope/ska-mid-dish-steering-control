@@ -22,24 +22,39 @@ class Command(Enum):
     It needs to be kept up to date with the ICD.
     """
 
+    # CommandArbiter
     TAKE_AUTH = "CommandArbiter.Commands.TakeAuth"
     RELEASE_AUTH = "CommandArbiter.Commands.ReleaseAuth"
+    # Management
     ACTIVATE = "Management.Commands.Activate"
     DEACTIVATE = "Management.Commands.DeActivate"
     MOVE2BAND = "Management.Commands.Move2Band"
     RESET = "Management.Commands.Reset"
+    SET_ON_SOURCE_THRESHOLD = "Management.Commands.SetOnSourceThreshold"
+    SET_POWER_MODE = "Management.Commands.SetPowerMode"
     SLEW2ABS_AZ_EL = "Management.Commands.Slew2AbsAzEl"
     SLEW2ABS_SINGLE_AX = "Management.Commands.Slew2AbsSingleAx"
+    SLEW2REL_AZ_EL = "Management.Commands.Slew2RelAzEl"
+    SLEW2REL_SINGLE_AX = "Management.Commands.Slew2RelSingleAx"
     STOP = "Management.Commands.Stop"
     STOW = "Management.Commands.Stow"
-    SET_POWER_MODE = "Management.Commands.SetPowerMode"
+    TRACK_START_DM = "Management.Commands.TrackStartDM"
+    TRACK_START_POLY_DM = "Management.Commands.TrackStartPolyDM"
+    # Pointing
     AMBTEMP_CORR_SETUP = "Pointing.Commands.AmbTempCorrSetup"
     PM_CORR_ON_OFF = "Pointing.Commands.PmCorrOnOff"
     STATIC_PM_SETUP = "Pointing.Commands.StaticPmSetup"
+    TILT_CAL_SETUP = "Pointing.Commands.TiltCalSetup"
+    # Safety
     INTERLOCK_ACK = "Safety.Commands.InterlockAck"
+    MOVE_STOW_PIN = "Safety.Commands.MoveStowPin"
+    # Time source
+    SET_TIME_SOURCE = "Time_cds.Commands.SetTimeSource"
+    # Tracking
     TRACK_LOAD_STATIC_OFF = "Tracking.Commands.TrackLoadStaticOff"
     TRACK_LOAD_TABLE = "Tracking.Commands.TrackLoadTable"
     TRACK_START = "Tracking.Commands.TrackStart"
+    TRACK_START_POLY = "Tracking.Commands.TrackStartPoly"
 
 
 class ResultCode(IntEnum):
