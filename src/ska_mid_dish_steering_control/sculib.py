@@ -495,10 +495,9 @@ class SteeringControlUnit:
         Release any command authority, unsubscribe from all subscriptions, disconnect
         from the server, and stop the event loop if it was started in a separate thread.
         """
-        result_code, _ = self.release_authority()
-        if result_code != ResultCode.CONNECTION_CLOSED:
-            self.unsubscribe_all()
-            self.disconnect()
+        self.release_authority()
+        self.unsubscribe_all()
+        self.disconnect()
         self.cleanup_resources()
 
     def cleanup_resources(self) -> None:
@@ -1661,17 +1660,29 @@ class SteeringControlUnit:
         :param uid: The ID of the user to unsubscribe.
         """
         subscription = self._subscriptions.pop(uid)
-        _ = asyncio.run_coroutine_threadsafe(
-            subscription["subscription"].delete(), self.event_loop
-        ).result()
+        try:
+            _ = asyncio.run_coroutine_threadsafe(
+                subscription["subscription"].delete(), self.event_loop
+            ).result()
+        except ConnectionError as e:
+            asyncio.run_coroutine_threadsafe(
+                handle_exception(e, f"Tried to unsubscribe from {uid}."),
+                self.event_loop,
+            )
 
     def unsubscribe_all(self) -> None:
         """Unsubscribe all subscriptions."""
         while len(self._subscriptions) > 0:
-            _, subscription = self._subscriptions.popitem()
-            _ = asyncio.run_coroutine_threadsafe(
-                subscription["subscription"].delete(), self.event_loop
-            ).result()
+            uid, subscription = self._subscriptions.popitem()
+            try:
+                _ = asyncio.run_coroutine_threadsafe(
+                    subscription["subscription"].delete(), self.event_loop
+                ).result()
+            except ConnectionError as e:
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, f"Tried to unsubscribe from {uid}."),
+                    self.event_loop,
+                )
 
     def get_subscription_values(self) -> list[dict]:
         """

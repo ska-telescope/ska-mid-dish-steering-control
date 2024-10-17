@@ -10,6 +10,8 @@ Unreleased
     - WOM-464: Added ``ServerStatus.CurrentTime`` key to ``nodes`` and ``attributes`` properties that reads the server's local time.
 - Documentation:
     - KAR-1198: Updated 'How to use SCU'.
+- Bug fixes:
+    - WOM-492: Catch ``ConnectionError`` exception when trying to unsubscribe after connection has been closed.
 
 
 Older history
