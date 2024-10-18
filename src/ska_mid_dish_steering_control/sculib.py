@@ -128,7 +128,7 @@ from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 
-from .constants import PACKAGE_VERSION, USER_CACHE_DIR, CmdReturn, Command, ResultCode
+from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
 from .track_table import TrackTable
 
 logger = logging.getLogger("ska-mid-ds-scu")
@@ -366,7 +366,7 @@ class SteeringControlUnit:
     :param nodes_cache_dir: Directory where to save the cache and load it from.
         Default is the user cache directory determined with platformdirs.
     :param app_name: application name for OPC UA client description.
-        Default 'SKA-Mid-DS-SCU v{PACKAGE_VERSION}'
+        Default 'SKA-Mid-DS-SCU v{__version__}'
     """
 
     # ------------------
@@ -386,7 +386,7 @@ class SteeringControlUnit:
         gui_app: bool = False,
         use_nodes_cache: bool = False,
         nodes_cache_dir: Path = USER_CACHE_DIR,
-        app_name: str = f"SKA-Mid-DS-SCU v{PACKAGE_VERSION}",
+        app_name: str = f"SKA-Mid-DS-SCU v{__version__}",
     ) -> None:
         """Initialise SCU with the provided parameters."""
         logger.info("Initialising SCU")
