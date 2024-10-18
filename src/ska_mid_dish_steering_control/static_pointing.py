@@ -13,6 +13,17 @@ from jsonschema import ValidationError, validate
 
 logger = logging.getLogger("ska-mid-ds-scu")
 
+JSONData = (  # Type hint for any JSON-encodable data
+    None
+    | bool
+    | int
+    | float
+    | str
+    | list["JSONData"]  # A list can contain more JSON-encodable data
+    | dict[str, "JSONData"]  # A dict must have str keys and JSON-encodable data
+    | tuple["JSONData", ...]  # A tuple can contain more JSON-encodable data
+)
+
 
 # mypy: ignore-errors
 class StaticPointingModel:
@@ -92,6 +103,7 @@ class StaticPointingModel:
         "HESE8": "arcsec",
     }
     _RMS_LIST = ["xel_rms", "el_rms", "sky_rms"]
+    _RMS_DEF_DICT = {"value": None, "units": "arcsec"}
     _COEF_DEF_DICT = {
         "value": 0.0,
         "units": None,
@@ -100,7 +112,6 @@ class StaticPointingModel:
     }
     _MIN_COEF = -2000.0
     _MAX_COEF = +2000.0
-    _RMS_DEF_DICT = {"value": None, "units": "arcsec"}
 
     def __init__(self, schema_file_path: Path | None = None) -> None:
         """
@@ -125,7 +136,7 @@ class StaticPointingModel:
             provided, the class with generate a default schema.
         """
         # The global pointing model dict structure is built with default values
-        self._gpm_dict = {
+        self._gpm_dict: dict[str, JSONData] = {
             "interface": self._INTERFACE_PREFIX + self._VERSION,
             "antenna": None,
             "band": None,
@@ -143,7 +154,7 @@ class StaticPointingModel:
             for attr in self._RMS_DEF_DICT:
                 self._gpm_dict["rms_fits"][rms][attr] = self._COEF_DEF_DICT[attr]
         # Create schema
-        self._schema: dict[str, str | dict] | None = None
+        self._schema: dict[str, JSONData] | None = None
         if schema_file_path is not None:
             self._schema = self._load_json_file(schema_file_path)
         if self._schema is None:
@@ -157,7 +168,7 @@ class StaticPointingModel:
 
         :param filename: Name of file to write schema to.
         """
-        schema = {
+        schema: dict[str, JSONData] = {
             "$schema": "http://json-schema.org/draft-07/schema",
             "title": "SKA-Mid global pointing model coefficients",
             "description": "Pointing coefficients and metadata for antenna/band pairs",
@@ -408,7 +419,7 @@ class StaticPointingModel:
         return False
 
     @staticmethod
-    def _check_float(value) -> Any:
+    def _check_float(value: Any) -> Any:
         try:
             return float(value)
         except (ValueError, TypeError):
