@@ -135,24 +135,15 @@ class StaticPointingModel:
         :param schema_file_path: Optional Path to an existing JSON schema. If not
             provided, the class with generate a default schema.
         """
-        # The global pointing model dict structure is built with default values
+        # The global pointing model dict minimal structure
         self._gpm_dict: dict[str, JSONData] = {
             "interface": self._INTERFACE_PREFIX + self._VERSION,
-            "antenna": None,
+            "antenna": "SKAxxx",
             "band": None,
-            "attrs": self._ATTRS_DEF_DICT,
             "coefficients": {},
-            "rms_fits": {},
         }
-        self.set_attr(JSON_version=self._VERSION)
         for coeff in self._DSC_COEFFICIENTS_DICT:
             self._gpm_dict["coefficients"].update({coeff: {}})
-            for attr, value in self._COEFF_DEF_DICT.items():
-                self._gpm_dict["coefficients"][coeff][attr] = value
-        for rms in self._RMS_LIST:
-            self._gpm_dict["rms_fits"].update({rms: {}})
-            for attr in self._RMS_DEF_DICT:
-                self._gpm_dict["rms_fits"][rms][attr] = self._COEFF_DEF_DICT[attr]
         # Create schema
         self._schema: dict[str, JSONData] | None = None
         if schema_file_path is not None:
@@ -168,6 +159,7 @@ class StaticPointingModel:
 
         :param filename: Name of file to write schema to.
         """
+        self._gpm_dict.update({"attrs": self._ATTRS_DEF_DICT, "rms_fits": {}})
         schema: dict[str, JSONData] = {
             "$schema": "http://json-schema.org/draft-07/schema",
             "title": "SKA-Mid global pointing model coefficients",
@@ -259,9 +251,34 @@ class StaticPointingModel:
                 json.dump(schema, file, indent=2)
         return schema
 
-    def get_coeff_value(self, coeff_name: str) -> float:
+    @property
+    def coefficients(self) -> list[str]:
         """
-        Return the named pointing coefficient from the structure.
+        List of loaded coefficients' names.
+
+        :return: List of loaded coefficients' names.
+        """
+        return list(self._gpm_dict["coefficients"].keys())
+
+    def get_all_coefficient_values(self) -> list[float]:
+        """
+        Return a list of all the available coefficients' values.
+
+        :returns:
+            - The actual value if present.
+            - 0.0 if not present.
+        """
+        values = []
+        for coeff_name in self._DSC_COEFFICIENTS_DICT:
+            if coeff_name in self._gpm_dict["coefficients"]:
+                values.append(self._gpm_dict["coefficients"][coeff_name]["value"])
+            else:
+                values.append(0.0)
+        return values
+
+    def get_coefficient_value(self, coeff_name: str) -> float:
+        """
+        Return the value of named pointing coefficient from the structure.
 
         :param coeff_name: Must be a name in the coefficient list.
         :returns:
@@ -331,6 +348,14 @@ class StaticPointingModel:
         self._gpm_dict.update({"antenna": ant_name})
         return True
 
+    def get_band(self) -> str:
+        """
+        Get the band name.
+
+        :returns: Band name.
+        """
+        return self._gpm_dict["band"]
+
     def set_band(self, band_name: str) -> bool:
         """
         Set the band name.
@@ -349,11 +374,11 @@ class StaticPointingModel:
 
         The Attrs are not used by the DS controller.
 
-        :keyword Obs_date_time: UTC of pointing observation.
-        :keyword eb_id: ID of execution block in ODA.
-        :keyword Analysis_date_time: UTC of parameter fit analysis.
-        :keyword Version: Version of coefficient fitting code.
-        :keyword Comment: Operator comment.
+        :keyword obs_date_times: UTC of pointing observation.
+        :keyword eb_ids: IDs of execution block in ODA.
+        :keyword analysis_date_time: UTC of parameter fit analysis.
+        :keyword analysis_script: Script of parameter fit analysis.
+        :keyword comment: Operator comment.
         :returns: True if valid attr keywords are provided, False if not.
         """
         for key, val in kwargs.items():

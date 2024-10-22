@@ -129,6 +129,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 
 from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
+from .static_pointing import StaticPointingModel
 from .track_table import TrackTable
 
 logger = logging.getLogger("ska-mid-ds-scu")
@@ -433,6 +434,7 @@ class SteeringControlUnit:
         self._track_table_scheduled_task: Future | None = None
         self._track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[Enum]] = {}
+        self._static_pointing: dict[str, StaticPointingModel] = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -1973,6 +1975,125 @@ class SteeringControlUnit:
             ua.UInt16(interpol_int), start_time
         )
         return code, msg
+
+    # ---------------------
+    # Static pointing model
+    # ---------------------
+    def import_static_pointing_model(self, band: str, file_path: Path) -> None:
+        """
+        Import static pointing model parameters for a specified band from a JSON file.
+
+        The static pointing model is only imported to a variable of the SCU instance,
+        and not written to a (possibly) connected DSC.
+
+        :param band: Band name for which the parameters are for.
+        :param file_path: Path to the JSON file to load.
+        """
+        if band not in self._static_pointing:
+            logger.debug(f"Creating new StaticPointingModel instance for '{band}'.")
+            self._static_pointing[band] = StaticPointingModel(
+                Path("src/ska_mid_dish_steering_control/schemas/ska-mid-dish-gpm.json")
+            )
+        if self._static_pointing[band].read_gpm_json(file_path):
+            logger.debug(f"Successfully imported '{str(file_path)}' for '{band}'.")
+            if self._static_pointing[band].get_band() != band:
+                logger.warning(
+                    f"Given '{band}' does not match the specified band in the "
+                    f"JSON file: '{self._static_pointing[band].get_band()}'."
+                )
+
+    def export_static_pointing_model(
+        self, band: str, antenna: str | None = None
+    ) -> None:
+        """
+        Export current static pointing model parameters of specified band to JSON file.
+
+        :param band: Band name to export.
+        :param antenna: Optional antenna name to store in static pointing model JSON.
+        """
+        if band in self._static_pointing:
+            if antenna is not None:
+                self._static_pointing[band].set_antenna(antenna)
+            if self._static_pointing[band].write_gpm_json():
+                logger.debug(f"Successfully exported '{band}' static pointing model.")
+        else:
+            logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
+
+    def set_static_pointing_value(self, band: str, name: str, value: float) -> None:
+        """
+        Set the named static pointing parameters value in the band's model.
+
+        :param band: Band name.
+        :param name: Name of the parameter to set.
+        :param value: Float value to set.
+        """
+        if band in self._static_pointing:
+            self._static_pointing[band].set_coefficient(name, value=value)
+        else:
+            logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
+
+    def get_static_pointing_value(self, band: str, name: str) -> float | None:
+        """
+        Get the named static pointing parameters value in the band's model.
+
+        :param band: Band name.
+        :param name: Name of the parameter to set.
+        :returns:
+            - Value of parameter if set.
+            - Default 0.0 if not set.
+            - NaN if invalid parameter name given.
+            - None if band's model is not setup.
+        """
+        if band in self._static_pointing:
+            return self._static_pointing[band].get_coefficient_value(name)
+        logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
+        return None
+
+    def read_static_pointing_model(
+        self, band: str, antenna: str = "SKAxxx"
+    ) -> dict[str, float]:
+        """
+        Read static pointing model parameters for a specified band from connected DSC.
+
+        The read parameters is stored in SCU's static pointing model dict so changes can
+        be made and setup and/or exported again.
+
+        :param band: Band's parameters to read from DSC.
+        :param antenna: Target antenna name to store in static pointing model JSON dict.
+        :return: A dict of the read static pointing parameters.
+        """
+        if band not in self._static_pointing:
+            logger.debug(f"Creating new StaticPointingModel instance for '{band}'.")
+            self._static_pointing[band] = StaticPointingModel(
+                Path("src/ska_mid_dish_steering_control/schemas/ska-mid-dish-gpm.json")
+            )
+            self._static_pointing[band].set_antenna(antenna)
+            self._static_pointing[band].set_band(band)
+        coeff_dict = {}
+        band_int = self.convert_enum_to_int("BandType", band)
+        for coeff in self._static_pointing[band].coefficients:
+            value = self.attributes[
+                f"Pointing.StaticPmParameters.StaticPmParameters[{band_int}].{coeff}"
+            ].value
+            coeff_dict[coeff] = value
+            self._static_pointing[band].set_coefficient(coeff, value=value)
+        return coeff_dict
+
+    def setup_static_pointing_model(self, band: str) -> CmdReturn:
+        """
+        Setup static pointing model parameters for a specified band on connected DSC.
+
+        :param band: Band's parameters to write to DSC.
+        :return: The result of writing the static pointing model parameters.
+        """
+        if band in self._static_pointing:
+            band_int = self.convert_enum_to_int("BandType", band)
+            params = self._static_pointing[band].get_all_coefficient_values()
+            logger.debug(f"Static PM setup for '{band}': {params}")
+            return self.commands[Command.STATIC_PM_SETUP.value](band_int, *params)
+        msg = f"Static pointing model not setup for '{band}' in SCU client."
+        logger.info(msg)
+        return ResultCode.NOT_EXECUTED, msg, None
 
     # ---------------------------
     # Convenience command methods
