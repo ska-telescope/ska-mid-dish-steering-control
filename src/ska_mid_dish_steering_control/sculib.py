@@ -135,6 +135,9 @@ from .track_table import TrackTable
 logger = logging.getLogger("ska-mid-ds-scu")
 
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
+SPM_SCHEMA_PATH: Final = Path(
+    str(resources.files(__package__) / "schemas/ska-mid-dish-gpm.json")
+)
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -1991,9 +1994,7 @@ class SteeringControlUnit:
         """
         if band not in self._static_pointing:
             logger.debug(f"Creating new StaticPointingModel instance for '{band}'.")
-            self._static_pointing[band] = StaticPointingModel(
-                Path("src/ska_mid_dish_steering_control/schemas/ska-mid-dish-gpm.json")
-            )
+            self._static_pointing[band] = StaticPointingModel(SPM_SCHEMA_PATH)
         if self._static_pointing[band].read_gpm_json(file_path):
             logger.debug(f"Successfully imported '{str(file_path)}' for '{band}'.")
             if self._static_pointing[band].get_band() != band:
@@ -2064,9 +2065,7 @@ class SteeringControlUnit:
         """
         if band not in self._static_pointing:
             logger.debug(f"Creating new StaticPointingModel instance for '{band}'.")
-            self._static_pointing[band] = StaticPointingModel(
-                Path("src/ska_mid_dish_steering_control/schemas/ska-mid-dish-gpm.json")
-            )
+            self._static_pointing[band] = StaticPointingModel(SPM_SCHEMA_PATH)
             self._static_pointing[band].set_antenna(antenna)
             self._static_pointing[band].set_band(band)
         coeff_dict = {}
