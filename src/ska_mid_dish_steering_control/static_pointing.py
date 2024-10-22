@@ -387,13 +387,14 @@ class StaticPointingModel:
             return False
         return True
 
-    def write_gpm_json(self) -> bool:
+    def write_gpm_json(self, file_path: Path | None = None) -> bool:
         """
         Export the global pointing model JSON object to a file.
 
         The file will have the antenna and band identification encoded into its name.
         Validate against the schema prior to writing.
 
+        :param file_path: Optional path and name of JSON file to write.
         :returns: True if successful, False if not.
         """
         try:
@@ -407,7 +408,11 @@ class StaticPointingModel:
             self._gpm_dict["antenna"][0:3] in ["SKA", "MKT"]
             and self._gpm_dict["band"] in self._BAND_LIST
         ):
-            file_name = f"gpm-{self._gpm_dict['antenna']}-{self._gpm_dict['band']}.json"
+            file_name = (
+                f"gpm-{self._gpm_dict['antenna']}-{self._gpm_dict['band']}.json"
+                if file_path is None
+                else file_path
+            )
             with open(file_name, "w", encoding="utf-8") as file:
                 try:
                     json.dump(self._gpm_dict, file, indent=2)

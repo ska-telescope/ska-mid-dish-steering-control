@@ -2004,18 +2004,19 @@ class SteeringControlUnit:
                 )
 
     def export_static_pointing_model(
-        self, band: str, antenna: str | None = None
+        self, band: str, file_path: Path | None = None, antenna: str | None = None
     ) -> None:
         """
         Export current static pointing model parameters of specified band to JSON file.
 
         :param band: Band name to export.
+        :param file_path: Optional path and name of JSON file to write.
         :param antenna: Optional antenna name to store in static pointing model JSON.
         """
         if band in self._static_pointing:
             if antenna is not None:
                 self._static_pointing[band].set_antenna(antenna)
-            if self._static_pointing[band].write_gpm_json():
+            if self._static_pointing[band].write_gpm_json(file_path):
                 logger.debug(f"Successfully exported '{band}' static pointing model.")
         else:
             logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
