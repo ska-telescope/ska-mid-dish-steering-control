@@ -1,10 +1,4 @@
 {
-    "workbench.colorCustomizations": {
-        "titleBar.activeBackground": "#1E88E5", // Blue active background
-        "titleBar.activeForeground": "#FFFFFF", // White text color
-        "titleBar.inactiveBackground": "#90CAF9", // Lighter blue inactive background
-        "titleBar.inactiveForeground": "#FFFFFF" // White inactive text color
-    },
     "python.testing.pytestEnabled": true,
     "python.testing.pytestArgs": [
         // "--with-cetc-sim"

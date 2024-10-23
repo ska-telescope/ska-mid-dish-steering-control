@@ -82,6 +82,8 @@ class StaticPointingModel:
     _ISO_UTC_RE_PATTERN = (
         "^2[0-9]{3}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z$"
     )
+    # The order of the coefficients in the dict below must match the argument order of
+    # the 'StaticPmSetup' command as specified in the ICD.
     _DSC_COEFFICIENTS_DICT = {
         "IA": "arcsec",
         "CA": "arcsec",
@@ -454,7 +456,7 @@ class StaticPointingModel:
             return value
 
     @staticmethod
-    def _load_json_file(file_path: Path) -> dict[str, Any] | None:
+    def _load_json_file(file_path: Path) -> JSONData:
         """
         Load JSON file.
 

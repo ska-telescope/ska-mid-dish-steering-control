@@ -1982,26 +1982,23 @@ class SteeringControlUnit:
     # ---------------------
     # Static pointing model
     # ---------------------
-    def import_static_pointing_model(self, band: str, file_path: Path) -> None:
+    def import_static_pointing_model(self, file_path: Path) -> None:
         """
         Import static pointing model parameters for a specified band from a JSON file.
 
         The static pointing model is only imported to a variable of the SCU instance,
         and not written to a (possibly) connected DSC.
 
-        :param band: Band name for which the parameters are for.
         :param file_path: Path to the JSON file to load.
         """
-        if band not in self._static_pointing:
-            logger.debug(f"Creating new StaticPointingModel instance for '{band}'.")
-            self._static_pointing[band] = StaticPointingModel(SPM_SCHEMA_PATH)
-        if self._static_pointing[band].read_gpm_json(file_path):
-            logger.debug(f"Successfully imported '{str(file_path)}' for '{band}'.")
-            if self._static_pointing[band].get_band() != band:
-                logger.warning(
-                    f"Given '{band}' does not match the specified band in the "
-                    f"JSON file: '{self._static_pointing[band].get_band()}'."
-                )
+        sp_model = StaticPointingModel(SPM_SCHEMA_PATH)
+        if sp_model.read_gpm_json(file_path):
+            band = sp_model.get_band()
+            self._static_pointing[band] = sp_model
+            logger.debug(
+                f"Successfully imported static pointing model from '{str(file_path)}' "
+                f"for '{band}'."
+            )
 
     def export_static_pointing_model(
         self, band: str, file_path: Path | None = None, antenna: str | None = None
