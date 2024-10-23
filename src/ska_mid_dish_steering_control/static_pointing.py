@@ -155,11 +155,11 @@ class StaticPointingModel:
 
     # TODO: Refactor
     # pylint: disable=too-many-nested-blocks, too-many-branches, too-many-statements
-    def create_json_schema(self, file_name: str | None = None) -> dict[str, JSONData]:
+    def create_json_schema(self, file_name: Path | None = None) -> dict[str, JSONData]:
         """
         Create a JSON schema for validating the global pointing model coefficient file.
 
-        :param file_name: Name of file to write schema to.
+        :param file_name: Path and name of file to write schema to.
         """
         self._gpm_dict.update({"attrs": self._ATTRS_DEF_DICT, "rms_fits": {}})
         schema: dict[str, JSONData] = {
@@ -260,7 +260,7 @@ class StaticPointingModel:
                         UnicodeEncodeError,
                         OSError,
                     ) as e:
-                        logger.error("Error while dumping JSON file: %s", e)
+                        logger.error(f"Error while dumping JSON file: {e}")
             except (PermissionError, OSError) as e:
                 logger.error(
                     f"Caught exception trying to write file '{file_name}': {e}"
@@ -397,11 +397,13 @@ class StaticPointingModel:
         :keyword comment: Operator comment.
         :returns: True if valid attr keywords are provided, False if not.
         """
+        valid_keywords = True
         for key, val in kwargs.items():
             if key in self._ATTRS_DEF_DICT:
                 self._gpm_dict["attrs"][key] = val
-            return False
-        return True
+            else:
+                valid_keywords = False
+        return valid_keywords
 
     def write_gpm_json(
         self, file_path: Path | None = None, overwrite: bool = False
@@ -420,7 +422,7 @@ class StaticPointingModel:
             validate(self._gpm_dict, self._schema)
         except ValidationError as e:
             logger.error(
-                "Current pointing model does not match the JSON schema: %s", e.message
+                f"Current pointing model does not match the JSON schema: {e.message}",
             )
             return False
         if (
@@ -446,7 +448,7 @@ class StaticPointingModel:
                         UnicodeEncodeError,
                         OSError,
                     ) as e:
-                        logger.error("Error while dumping JSON file: %s", e)
+                        logger.error(f"Error while dumping JSON file: {e}")
             except (FileExistsError, PermissionError, OSError) as e:
                 logger.error(
                     f"Caught exception trying to write file '{file_name}': {e}"
@@ -468,7 +470,7 @@ class StaticPointingModel:
                 return True
             except ValidationError as e:
                 logger.error(
-                    "'%s' does not match the JSON schema: %s", file_path, e.message
+                    f"'{file_path}' does not match the JSON schema: {e.message}"
                 )
         return False
 
