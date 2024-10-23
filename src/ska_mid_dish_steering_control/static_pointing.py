@@ -155,11 +155,11 @@ class StaticPointingModel:
 
     # TODO: Refactor
     # pylint: disable=too-many-nested-blocks, too-many-branches, too-many-statements
-    def create_json_schema(self, filename: str | None = None) -> dict:
+    def create_json_schema(self, file_name: str | None = None) -> dict[str, JSONData]:
         """
         Create a JSON schema for validating the global pointing model coefficient file.
 
-        :param filename: Name of file to write schema to.
+        :param file_name: Name of file to write schema to.
         """
         self._gpm_dict.update({"attrs": self._ATTRS_DEF_DICT, "rms_fits": {}})
         schema: dict[str, JSONData] = {
@@ -248,9 +248,23 @@ class StaticPointingModel:
                                 obj5.update({"type": "string"})
                                 obj5.update({"enum": ["arcsec"]})
         schema.update({"required": ["interface", "antenna", "band", "coefficients"]})
-        if filename is not None:
-            with open(filename, "w", encoding="utf-8") as file:
-                json.dump(schema, file, indent=2)
+        if file_name is not None:
+            try:
+                with open(file_name, "w", encoding="utf-8") as file:
+                    try:
+                        json.dump(schema, file, indent=2)
+                    except (
+                        TypeError,
+                        OverflowError,
+                        RecursionError,
+                        UnicodeEncodeError,
+                        OSError,
+                    ) as e:
+                        logger.error("Error while dumping JSON file: %s", e)
+            except (PermissionError, OSError) as e:
+                logger.error(
+                    f"Caught exception trying to write file '{file_name}': {e}"
+                )
         return schema
 
     @property
@@ -389,7 +403,9 @@ class StaticPointingModel:
             return False
         return True
 
-    def write_gpm_json(self, file_path: Path | None = None) -> bool:
+    def write_gpm_json(
+        self, file_path: Path | None = None, overwrite: bool = False
+    ) -> bool:
         """
         Export the global pointing model JSON object to a file.
 
@@ -397,6 +413,7 @@ class StaticPointingModel:
         Validate against the schema prior to writing.
 
         :param file_path: Optional path and name of JSON file to write.
+        :param overwrite: Whether to overwrite an existing file. Default is False.
         :returns: True if successful, False if not.
         """
         try:
@@ -415,18 +432,25 @@ class StaticPointingModel:
                 if file_path is None
                 else file_path
             )
-            with open(file_name, "w", encoding="utf-8") as file:
-                try:
-                    json.dump(self._gpm_dict, file, indent=2)
-                    return True
-                except (
-                    TypeError,
-                    OverflowError,
-                    RecursionError,
-                    UnicodeEncodeError,
-                    OSError,
-                ) as e:
-                    logger.error("Error while dumping JSON file: %s", e)
+            try:
+                with open(
+                    file_name, "w" if overwrite else "x", encoding="utf-8"
+                ) as file:
+                    try:
+                        json.dump(self._gpm_dict, file, indent=2)
+                        return True
+                    except (
+                        TypeError,
+                        OverflowError,
+                        RecursionError,
+                        UnicodeEncodeError,
+                        OSError,
+                    ) as e:
+                        logger.error("Error while dumping JSON file: %s", e)
+            except (FileExistsError, PermissionError, OSError) as e:
+                logger.error(
+                    f"Caught exception trying to write file '{file_name}': {e}"
+                )
         return False
 
     def read_gpm_json(self, file_path: Path) -> bool:
@@ -461,15 +485,20 @@ class StaticPointingModel:
         Load JSON file.
 
         :param file_path: Path of JSON file to load.
-        :return: decoded JSON file contents as nested dictionary,
-            or None if it failed.
+        :return: decoded JSON file contents as nested dictionary, or None if it failed.
         """
-        if file_path.exists():
+        try:
             with open(file_path, "r", encoding="UTF-8") as file:
                 try:
                     return json.load(file)
                 except json.JSONDecodeError:
-                    logger.error("The file '%s' is not valid JSON.", file_path)
-        else:
-            logger.warning("The file '%s' does not exist.", file_path)
+                    logger.error(f"The file '{file_path}' is not valid JSON.")
+        except (
+            FileNotFoundError,
+            IsADirectoryError,
+            PermissionError,
+            UnicodeDecodeError,
+            OSError,
+        ) as e:
+            logger.error(f"Caught exception trying to read file '{file_path}': {e}")
         return None
