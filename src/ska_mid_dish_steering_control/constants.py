@@ -110,3 +110,13 @@ class ResultCode(IntEnum):
 
 # Type aliases
 CmdReturn = tuple[ResultCode, str, list[int | None] | None]
+JSONData = (  # Type hint for any JSON-encodable data
+    None
+    | bool
+    | int
+    | float
+    | str
+    | list["JSONData"]  # A list can contain more JSON-encodable data
+    | dict[str, "JSONData"]  # A dict must have str keys and JSON-encodable data
+    | tuple["JSONData", ...]  # A tuple can contain more JSON-encodable data
+)

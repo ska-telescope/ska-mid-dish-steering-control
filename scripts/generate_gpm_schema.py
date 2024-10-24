@@ -28,7 +28,8 @@ Ref: SDR-1249 & SS-131
 import json
 from pathlib import Path
 
-from ska_mid_dish_steering_control.static_pointing import JSONData, StaticPointingModel
+from ska_mid_dish_steering_control.constants import JSONData
+from ska_mid_dish_steering_control.static_pointing import StaticPointingModel
 
 INTERFACE_PATTERN = StaticPointingModel.INTERFACE_PREFIX + "[0-9]{1,2}\\.[0-9]{1,2}"
 EB_ID_RE_PATTERN = "^eb-[a-z0-9]+-2[0-9]{3}[01][0-9][0-3][0-9]-[a-z0-9]+$"

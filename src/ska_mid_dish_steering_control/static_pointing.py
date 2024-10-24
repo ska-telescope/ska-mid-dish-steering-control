@@ -5,22 +5,13 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
 
 from jsonschema import ValidationError, validate
 
-logger = logging.getLogger("ska-mid-ds-scu")
+from . import utils
+from .constants import JSONData
 
-JSONData = (  # Type hint for any JSON-encodable data
-    None
-    | bool
-    | int
-    | float
-    | str
-    | list["JSONData"]  # A list can contain more JSON-encodable data
-    | dict[str, "JSONData"]  # A dict must have str keys and JSON-encodable data
-    | tuple["JSONData", ...]  # A tuple can contain more JSON-encodable data
-)
+logger = logging.getLogger("ska-mid-ds-scu")
 
 
 # mypy: ignore-errors
@@ -139,7 +130,7 @@ class StaticPointingModel:
         for coeff in self.DSC_COEFFICIENTS_DICT:
             self._gpm_dict["coefficients"].update({coeff: {}})
         # Create schema
-        self._schema = self._load_json_file(schema_file_path)
+        self._schema = utils.load_json_file(schema_file_path)
 
     @property
     def coefficients(self) -> list[str]:
@@ -203,11 +194,11 @@ class StaticPointingModel:
                         if self.MIN_COEFF <= val <= self.MAX_COEFF:
                             self._gpm_dict["coefficients"][coeff_name][
                                 key
-                            ] = self._check_float(val)
+                            ] = utils.check_float(val)
                     elif key == "stderr":
                         self._gpm_dict["coefficients"][coeff_name][
                             key
-                        ] = self._check_float(val)
+                        ] = utils.check_float(val)
                     else:
                         self._gpm_dict["coefficients"][coeff_name][key] = val
 
@@ -224,7 +215,7 @@ class StaticPointingModel:
         if rms_name in self.RMS_LIST:
             for key, val in kwargs.items():
                 if key in self.RMS_DEF_DICT:
-                    self._gpm_dict["rms_fits"][rms_name][key] = self._check_float(val)
+                    self._gpm_dict["rms_fits"][rms_name][key] = utils.check_float(val)
 
     def set_antenna(self, ant_name: str) -> bool:
         """
@@ -337,7 +328,7 @@ class StaticPointingModel:
             the schema.
         :returns: True if successful read and schema validation, False if not.
         """
-        self._gpm_dict = self._load_json_file(file_path)
+        self._gpm_dict = utils.load_json_file(file_path)
         if self._gpm_dict is not None:
             try:
                 validate(self._gpm_dict, self._schema)
@@ -347,34 +338,3 @@ class StaticPointingModel:
                     f"'{file_path}' does not match the JSON schema: {e.message}"
                 )
         return False
-
-    @staticmethod
-    def _check_float(value: Any) -> Any:
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return value
-
-    @staticmethod
-    def _load_json_file(file_path: Path) -> JSONData:
-        """
-        Load JSON file.
-
-        :param file_path: Path of JSON file to load.
-        :return: decoded JSON file contents as nested dictionary, or None if it failed.
-        """
-        try:
-            with open(file_path, "r", encoding="UTF-8") as file:
-                try:
-                    return json.load(file)
-                except json.JSONDecodeError:
-                    logger.error(f"The file '{file_path}' is not valid JSON.")
-        except (
-            FileNotFoundError,
-            IsADirectoryError,
-            PermissionError,
-            UnicodeDecodeError,
-            OSError,
-        ) as e:
-            logger.error(f"Caught exception trying to read file '{file_path}': {e}")
-        return None

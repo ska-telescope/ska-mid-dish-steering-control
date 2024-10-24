@@ -128,6 +128,7 @@ from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 
+from . import utils
 from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
 from .static_pointing import StaticPointingModel
 from .track_table import TrackTable
@@ -1117,24 +1118,6 @@ class SteeringControlUnit:
     # -----------------------------
     # Node dictionaries and caching
     # -----------------------------
-    def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
-        """
-        Load JSON file.
-
-        :param file_path: of JSON file to load.
-        :return: decoded JSON file contents as nested dictionary,
-            or empty dict if the file does not exists.
-        """
-        if file_path.exists():
-            with open(file_path, "r", encoding="UTF-8") as file:
-                try:
-                    return json.load(file)
-                except json.JSONDecodeError:
-                    logger.warning("The file %s is not valid JSON.", file_path)
-        else:
-            logger.debug("The file %s does not exist.", file_path)
-        return {}
-
     def _cache_node_ids(self, file_path: Path, nodes: NodeDict) -> None:
         """
         Cache Node IDs.
@@ -1154,7 +1137,9 @@ class SteeringControlUnit:
                     node_ids[key] = (node.nodeid.to_string(), node_class)
             except TypeError as exc:
                 logger.debug("TypeError with dict value %s: %s", tup, exc)
-        cached_data = self._load_json_file(file_path)
+        cached_data: dict[str, CachedNodesDict] = (
+            utils.load_json_file(file_path) or {}  # type: ignore
+        )
         cached_data[self._server_str_id] = {
             "node_ids": node_ids,
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1240,8 +1225,12 @@ class SteeringControlUnit:
             well as a string timestamp of when the dicts were generated.
         """
         cache_file_path = self._nodes_cache_dir / f"{top_level_node_name}.json"
-        cache = self._load_json_file(cache_file_path) if self._use_nodes_cache else None
-        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+        cache = utils.load_json_file(cache_file_path) if self._use_nodes_cache else None
+        cached_nodes: CachedNodesDict | None = (
+            cache.get(self._server_str_id)  # type: ignore
+            if cache is not None
+            else None
+        )
         # Check for existing Node IDs cache
         if cached_nodes:
             node_dicts = self._generate_node_dicts_from_cache(
