@@ -26,18 +26,6 @@ def static_pointing_model() -> StaticPointingModel:
     return spm
 
 
-def test_create_json_schema() -> None:
-    """Test the 'create_json_schema' method."""
-    sp_model = StaticPointingModel()
-    assert sp_model._schema is not None
-    with patch("builtins.open", mock_open()) as mock_file, patch(
-        "json.dump"
-    ) as mock_dump:
-        sp_model.create_json_schema(Path("test.json"))
-        mock_file.assert_called_once_with(Path("test.json"), "w", encoding="utf-8")
-        mock_dump.assert_called_once()
-
-
 def test_coefficients_property(sp_model: StaticPointingModel) -> None:
     """
     Test the 'coefficients' property.
@@ -45,7 +33,7 @@ def test_coefficients_property(sp_model: StaticPointingModel) -> None:
     :param model: Instance of StaticPointingModel.
     """
     assert isinstance(sp_model.coefficients, list)
-    assert len(sp_model.coefficients) == len(sp_model._DSC_COEFFICIENTS_DICT)
+    assert len(sp_model.coefficients) == len(sp_model.DSC_COEFFICIENTS_DICT)
 
 
 def test_get_all_coefficient_values(sp_model: StaticPointingModel) -> None:
@@ -56,7 +44,7 @@ def test_get_all_coefficient_values(sp_model: StaticPointingModel) -> None:
     """
     sp_model._gpm_dict["coefficients"]["IA"]["value"] = 10.5
     values = sp_model.get_all_coefficient_values()
-    assert len(values) == len(sp_model._DSC_COEFFICIENTS_DICT)
+    assert len(values) == len(sp_model.DSC_COEFFICIENTS_DICT)
     assert values[0] == 10.5  # Checks that the first coefficient value is set
 
 

@@ -136,7 +136,7 @@ logger = logging.getLogger("ska-mid-ds-scu")
 
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
 SPM_SCHEMA_PATH: Final = Path(
-    str(resources.files(__package__) / "schemas/ska-mid-dish-gpm.json")
+    resources.files(__package__) / "schemas/ska-mid-dish-gpm.json"  # type: ignore
 )
 
 
