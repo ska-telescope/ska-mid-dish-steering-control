@@ -116,7 +116,7 @@ import socket
 import threading
 import time
 from concurrent.futures import Future
-from enum import Enum
+from enum import IntEnum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
@@ -437,7 +437,7 @@ class SteeringControlUnit:
         self._stop_track_table_schedule_task_event: threading.Event | None = None
         self._track_table_scheduled_task: Future | None = None
         self._track_table: TrackTable | None = None
-        self._opcua_enum_types: dict[str, Type[Enum]] = {}
+        self._opcua_enum_types: dict[str, Type[IntEnum]] = {}
         self._static_pointing: dict[str, StaticPointingModel] = {}
 
     def connect_and_setup(self) -> None:
@@ -801,7 +801,7 @@ class SteeringControlUnit:
         return self._parameter_attributes
 
     @property
-    def opcua_enum_types(self) -> dict[str, Type[Enum]]:
+    def opcua_enum_types(self) -> dict[str, Type[IntEnum]]:
         """
         Dictionary mapping OPC-UA enum type names to their corresponding value.
 
@@ -927,7 +927,7 @@ class SteeringControlUnit:
         """
         try:
             value = getattr(ua, enum_type)[name]
-            integer = value.value if isinstance(value, Enum) else value
+            integer = value.value if isinstance(value, IntEnum) else value
             return ua.UInt16(integer)
         except KeyError:
             logger.error("'%s' enum does not have '%s key!", enum_type, name)
@@ -954,7 +954,7 @@ class SteeringControlUnit:
             logger.error("%s is not a valid '%s' enum value!", value, enum_type)
             return value
 
-    def _create_enum_from_node(self, name: str, node: Node) -> Enum:
+    def _create_enum_from_node(self, name: str, node: Node) -> IntEnum:
         enum_values = asyncio.run_coroutine_threadsafe(
             node.get_value(), self.event_loop
         ).result()
@@ -964,7 +964,7 @@ class SteeringControlUnit:
         for value in enum_values:
             display_name = value.DisplayName.Text
             enum_dict[display_name] = value.Value
-        return Enum(name, enum_dict)
+        return IntEnum(name, enum_dict)
 
     def _create_command_function(
         self,
