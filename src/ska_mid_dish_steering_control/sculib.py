@@ -104,7 +104,7 @@ In case an attribute is not writeable, the OPC UA server will report an error:
 
 """
 
-# pylint: disable=too-many-lines, broad-exception-caught
+# pylint: disable=too-many-lines, broad-exception-caught, too-many-positional-arguments
 import asyncio
 import datetime
 import enum
