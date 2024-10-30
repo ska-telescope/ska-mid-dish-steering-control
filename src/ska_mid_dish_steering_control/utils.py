@@ -24,13 +24,7 @@ def load_json_file(file_path: Path) -> dict[str, JSONData] | None:
                 return json.load(file)
             except json.JSONDecodeError:
                 logger.error(f"The file '{file_path}' is not valid JSON.")
-    except (
-        FileNotFoundError,
-        IsADirectoryError,
-        PermissionError,
-        UnicodeDecodeError,
-        OSError,
-    ) as e:
+    except (UnicodeDecodeError, OSError) as e:
         logger.error(f"Caught exception trying to read file '{file_path}': {e}")
     return None
 
