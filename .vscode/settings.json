@@ -26,9 +26,7 @@
         "build/reports/code-coverage.xml"
     ],
     "coverage-gutters.showLineCoverage": true,
-    "autoDocstring.docstringFormat": "sphinx",
-    "autoDocstring.guessTypes": true,
-    "autoDocstring.includeExtendedSummary": true,
+    "autoDocstring.docstringFormat": "sphinx-notypes",
     "autoDocstring.startOnNewLine": true,
     "editor.rulers": [
         88

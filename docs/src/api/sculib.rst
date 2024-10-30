@@ -4,7 +4,7 @@ Dish Structure Steering Control Unit
 
 .. Only include the module level docstring.
 .. automodule:: ska_mid_dish_steering_control.sculib
-    :no-members:
+   :no-members:
 
 .. Include the publicly exposed functions and classes as in src/disq/__init_.py
 
@@ -20,10 +20,10 @@ SCU generator methods
 Enum classes
 ============
 
-.. autoclass:: ska_mid_dish_steering_control.constants.Command
+.. autoclass:: ska_mid_dish_steering_control.Command
    :members:
    :undoc-members:
 
-.. autoclass:: ska_mid_dish_steering_control.constants.ResultCode
+.. autoclass:: ska_mid_dish_steering_control.ResultCode
    :members:
    :undoc-members:

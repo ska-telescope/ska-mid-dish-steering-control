@@ -1,0 +1,649 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "title": "SKA-Mid global pointing model coefficients",
+  "description": "Pointing coefficients and metadata for antenna/band pairs",
+  "type": "object",
+  "properties": {
+    "interface": {
+      "type": "string",
+      "$id": "#/properties/interface",
+      "description": "The URL reference to the global pointing model schema",
+      "pattern": "https://schema.skao.int/ska-mid-dish-gpm/[0-9]{1,2}\\.[0-9]{1,2}"
+    },
+    "antenna": {
+      "type": "string",
+      "pattern": "(^SKA[0-9]{3}$)|(^MKT[0-9]{3}$)"
+    },
+    "band": {
+      "type": "string",
+      "enum": [
+        "Optical",
+        "Band_1",
+        "Band_2",
+        "Band_3",
+        "Band_4",
+        "Band_5a",
+        "Band_5b",
+        "Band_6"
+      ]
+    },
+    "coefficients": {
+      "type": "object",
+      "properties": {
+        "IA": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "CA": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "NPAE": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "AN": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "AN0": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "AW": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "AW0": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "ACEC": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "ACES": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "ABA": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "ABphi": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "deg"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "IE": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "ECEC": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "ECES": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "HECE4": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "HESE4": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "HECE8": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        },
+        "HESE8": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": -2000.0,
+              "maximum": 2000.0
+            },
+            "units": {
+              "enum": [
+                null,
+                "arcsec"
+              ]
+            },
+            "stderr": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "used": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "value"
+          ]
+        }
+      },
+      "required": [
+        "IA",
+        "CA",
+        "NPAE",
+        "AN",
+        "AN0",
+        "AW",
+        "AW0",
+        "ACEC",
+        "ACES",
+        "ABA",
+        "ABphi",
+        "IE",
+        "ECEC",
+        "ECES",
+        "HECE4",
+        "HESE4",
+        "HECE8",
+        "HESE8"
+      ]
+    },
+    "attrs": {
+      "type": "object",
+      "properties": {
+        "obs_date_times": {
+          "type": "array",
+          "items": {
+            "pattern": "^2[0-9]{3}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z$"
+          }
+        },
+        "eb_ids": {
+          "type": "array",
+          "items": {
+            "pattern": "^eb-[a-z0-9]+-2[0-9]{3}[01][0-9][0-3][0-9]-[a-z0-9]+$"
+          }
+        },
+        "analysis_script": {
+          "type": "string"
+        },
+        "analysis_date_time": {
+          "type": "string",
+          "pattern": "^2[0-9]{3}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z$"
+        },
+        "comment": {
+          "type": "string"
+        }
+      }
+    },
+    "rms_fits": {
+      "type": "object",
+      "properties": {
+        "xel_rms": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "units": {
+              "type": "string",
+              "enum": [
+                "arcsec"
+              ]
+            }
+          }
+        },
+        "el_rms": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "units": {
+              "type": "string",
+              "enum": [
+                "arcsec"
+              ]
+            }
+          }
+        },
+        "sky_rms": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "units": {
+              "type": "string",
+              "enum": [
+                "arcsec"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "interface",
+    "antenna",
+    "band",
+    "coefficients"
+  ]
+}

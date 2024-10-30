@@ -48,6 +48,11 @@ plantuml_syntax_error_image = True
 # type-related fields in your documentation.
 autodoc_typehints = "description"
 
+autodoc_type_aliases = {
+    "ROAttribute": "ska_mid_dish_steering_control.sculib.ROAttribute",
+    "RWAttribute": "ska_mid_dish_steering_control.sculib.RWAttribute",
+}
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 
@@ -98,4 +103,8 @@ intersphinx_mapping = {
 
 nitpicky = True
 
-nitpick_ignore = [("py:class", "asyncio.events.AbstractEventLoop")]
+nitpick_ignore = [
+    ("py:class", "asyncio.events.AbstractEventLoop"),
+    ("py:class", "ska_mid_dish_steering_control.sculib.ROAttribute"),
+    ("py:class", "ska_mid_dish_steering_control.sculib.RWAttribute"),
+]

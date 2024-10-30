@@ -5,7 +5,7 @@ build:
   tools:
     python: "3.10"
   apt_packages:
-  - plantuml
+    - plantuml
   jobs:
     # https://docs.readthedocs.io/en/stable/build-customization.html#install-dependencies-with-poetry
     post_create_environment:
@@ -15,9 +15,7 @@ build:
       # Tell poetry to not use a virtual environment
       - poetry config virtualenvs.create false
     post_install:
-      # Install dependencies for only 'docs' dependency group. If you do not have docs group, please omit it
-      # https://python-poetry.org/docs/managing-dependencies/#dependency-groups
-      - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH poetry install --only docs
+      - VIRTUAL_ENV=$READTHEDOCS_VIRTUALENV_PATH poetry install --with docs
 
 sphinx:
   configuration: docs/src/conf.py

@@ -116,7 +116,7 @@ import socket
 import threading
 import time
 from concurrent.futures import Future
-from enum import Enum
+from enum import IntEnum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
@@ -128,12 +128,17 @@ from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
 
-from .constants import PACKAGE_VERSION, USER_CACHE_DIR, CmdReturn, Command, ResultCode
+from . import utils
+from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
+from .static_pointing import StaticPointingModel
 from .track_table import TrackTable
 
 logger = logging.getLogger("ska-mid-ds-scu")
 
 COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
+SPM_SCHEMA_PATH: Final = Path(
+    resources.files(__package__) / "schemas/ska-mid-dish-gpm.json"  # type: ignore
+)
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -366,7 +371,7 @@ class SteeringControlUnit:
     :param nodes_cache_dir: Directory where to save the cache and load it from.
         Default is the user cache directory determined with platformdirs.
     :param app_name: application name for OPC UA client description.
-        Default 'SKA-Mid-DS-SCU v{PACKAGE_VERSION}'
+        Default 'SKA-Mid-DS-SCU v{__version__}'
     """
 
     # ------------------
@@ -386,7 +391,7 @@ class SteeringControlUnit:
         gui_app: bool = False,
         use_nodes_cache: bool = False,
         nodes_cache_dir: Path = USER_CACHE_DIR,
-        app_name: str = f"SKA-Mid-DS-SCU v{PACKAGE_VERSION}",
+        app_name: str = f"SKA-Mid-DS-SCU v{__version__}",
     ) -> None:
         """Initialise SCU with the provided parameters."""
         logger.info("Initialising SCU")
@@ -432,7 +437,8 @@ class SteeringControlUnit:
         self._stop_track_table_schedule_task_event: threading.Event | None = None
         self._track_table_scheduled_task: Future | None = None
         self._track_table: TrackTable | None = None
-        self._opcua_enum_types: dict[str, Type[Enum]] = {}
+        self._opcua_enum_types: dict[str, Type[IntEnum]] = {}
+        self._static_pointing: dict[str, StaticPointingModel] = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -795,7 +801,7 @@ class SteeringControlUnit:
         return self._parameter_attributes
 
     @property
-    def opcua_enum_types(self) -> dict[str, Type[Enum]]:
+    def opcua_enum_types(self) -> dict[str, Type[IntEnum]]:
         """
         Dictionary mapping OPC-UA enum type names to their corresponding value.
 
@@ -921,7 +927,7 @@ class SteeringControlUnit:
         """
         try:
             value = getattr(ua, enum_type)[name]
-            integer = value.value if isinstance(value, Enum) else value
+            integer = value.value if isinstance(value, IntEnum) else value
             return ua.UInt16(integer)
         except KeyError:
             logger.error("'%s' enum does not have '%s key!", enum_type, name)
@@ -948,7 +954,7 @@ class SteeringControlUnit:
             logger.error("%s is not a valid '%s' enum value!", value, enum_type)
             return value
 
-    def _create_enum_from_node(self, name: str, node: Node) -> Enum:
+    def _create_enum_from_node(self, name: str, node: Node) -> IntEnum:
         enum_values = asyncio.run_coroutine_threadsafe(
             node.get_value(), self.event_loop
         ).result()
@@ -958,7 +964,7 @@ class SteeringControlUnit:
         for value in enum_values:
             display_name = value.DisplayName.Text
             enum_dict[display_name] = value.Value
-        return Enum(name, enum_dict)
+        return IntEnum(name, enum_dict)
 
     def _create_command_function(
         self,
@@ -1112,24 +1118,6 @@ class SteeringControlUnit:
     # -----------------------------
     # Node dictionaries and caching
     # -----------------------------
-    def _load_json_file(self, file_path: Path) -> dict[str, CachedNodesDict]:
-        """
-        Load JSON file.
-
-        :param file_path: of JSON file to load.
-        :return: decoded JSON file contents as nested dictionary,
-            or empty dict if the file does not exists.
-        """
-        if file_path.exists():
-            with open(file_path, "r", encoding="UTF-8") as file:
-                try:
-                    return json.load(file)
-                except json.JSONDecodeError:
-                    logger.warning("The file %s is not valid JSON.", file_path)
-        else:
-            logger.debug("The file %s does not exist.", file_path)
-        return {}
-
     def _cache_node_ids(self, file_path: Path, nodes: NodeDict) -> None:
         """
         Cache Node IDs.
@@ -1149,7 +1137,9 @@ class SteeringControlUnit:
                     node_ids[key] = (node.nodeid.to_string(), node_class)
             except TypeError as exc:
                 logger.debug("TypeError with dict value %s: %s", tup, exc)
-        cached_data = self._load_json_file(file_path)
+        cached_data: dict[str, CachedNodesDict] = (
+            utils.load_json_file(file_path) or {}  # type: ignore
+        )
         cached_data[self._server_str_id] = {
             "node_ids": node_ids,
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -1235,8 +1225,12 @@ class SteeringControlUnit:
             well as a string timestamp of when the dicts were generated.
         """
         cache_file_path = self._nodes_cache_dir / f"{top_level_node_name}.json"
-        cache = self._load_json_file(cache_file_path) if self._use_nodes_cache else None
-        cached_nodes = cache.get(self._server_str_id) if cache is not None else None
+        cache = utils.load_json_file(cache_file_path) if self._use_nodes_cache else None
+        cached_nodes: CachedNodesDict | None = (
+            cache.get(self._server_str_id)  # type: ignore
+            if cache is not None
+            else None
+        )
         # Check for existing Node IDs cache
         if cached_nodes:
             node_dicts = self._generate_node_dicts_from_cache(
@@ -1973,6 +1967,124 @@ class SteeringControlUnit:
             ua.UInt16(interpol_int), start_time
         )
         return code, msg
+
+    # ---------------------
+    # Static pointing model
+    # ---------------------
+    def import_static_pointing_model(self, file_path: Path) -> None:
+        """
+        Import static pointing model parameters for a specified band from a JSON file.
+
+        The static pointing model is only imported to a variable of the SCU instance,
+        and not written to a (possibly) connected DSC.
+
+        :param file_path: Path to the JSON file to load.
+        """
+        sp_model = StaticPointingModel(SPM_SCHEMA_PATH)
+        if sp_model.read_gpm_json(file_path):
+            band = sp_model.get_band()
+            self._static_pointing[band] = sp_model
+            logger.debug(
+                f"Successfully imported static pointing model from '{str(file_path)}' "
+                f"for '{band}'."
+            )
+
+    def export_static_pointing_model(
+        self,
+        band: str,
+        file_path: Path | None = None,
+        antenna: str | None = None,
+        overwrite: bool = False,
+    ) -> None:
+        """
+        Export current static pointing model parameters of specified band to JSON file.
+
+        :param band: Band name to export.
+        :param file_path: Optional path and name of JSON file to write.
+        :param antenna: Optional antenna name to store in static pointing model JSON.
+        :param overwrite: Whether to overwrite an existing file. Default is False.
+        """
+        if band in self._static_pointing:
+            if antenna is not None:
+                self._static_pointing[band].set_antenna(antenna)
+            if self._static_pointing[band].write_gpm_json(file_path, overwrite):
+                logger.debug(f"Successfully exported '{band}' static pointing model.")
+        else:
+            logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
+
+    def set_static_pointing_value(self, band: str, name: str, value: float) -> None:
+        """
+        Set the named static pointing parameters value in the band's model.
+
+        :param band: Band name.
+        :param name: Name of the parameter to set.
+        :param value: Float value to set.
+        """
+        if band in self._static_pointing:
+            self._static_pointing[band].set_coefficient(name, value=value)
+        else:
+            logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
+
+    def get_static_pointing_value(self, band: str, name: str) -> float | None:
+        """
+        Get the named static pointing parameters value in the band's model.
+
+        :param band: Band name.
+        :param name: Name of the parameter to set.
+        :returns:
+            - Value of parameter if set.
+            - Default 0.0 if not set.
+            - NaN if invalid parameter name given.
+            - None if band's model is not setup.
+        """
+        if band in self._static_pointing:
+            return self._static_pointing[band].get_coefficient_value(name)
+        logger.info(f"Static pointing model not setup for '{band}' in SCU client.")
+        return None
+
+    def read_static_pointing_model(
+        self, band: str, antenna: str = "SKAxxx"
+    ) -> dict[str, float]:
+        """
+        Read static pointing model parameters for a specified band from connected DSC.
+
+        The read parameters is stored in SCU's static pointing model dict so changes can
+        be made and setup and/or exported again.
+
+        :param band: Band's parameters to read from DSC.
+        :param antenna: Target antenna name to store in static pointing model JSON dict.
+        :return: A dict of the read static pointing parameters.
+        """
+        if band not in self._static_pointing:
+            logger.debug(f"Creating new StaticPointingModel instance for '{band}'.")
+            self._static_pointing[band] = StaticPointingModel(SPM_SCHEMA_PATH)
+            self._static_pointing[band].set_antenna(antenna)
+            self._static_pointing[band].set_band(band)
+        coeff_dict = {}
+        band_int = self.convert_enum_to_int("BandType", band)
+        for coeff in self._static_pointing[band].coefficients:
+            value = self.attributes[
+                f"Pointing.StaticPmParameters.StaticPmParameters[{band_int}].{coeff}"
+            ].value
+            coeff_dict[coeff] = value
+            self._static_pointing[band].set_coefficient(coeff, value=value)
+        return coeff_dict
+
+    def setup_static_pointing_model(self, band: str) -> CmdReturn:
+        """
+        Setup static pointing model parameters for a specified band on connected DSC.
+
+        :param band: Band's parameters to write to DSC.
+        :return: The result of writing the static pointing model parameters.
+        """
+        if band in self._static_pointing:
+            band_int = self.convert_enum_to_int("BandType", band)
+            params = self._static_pointing[band].get_all_coefficient_values()
+            logger.debug(f"Static PM setup for '{band}': {params}")
+            return self.commands[Command.STATIC_PM_SETUP.value](band_int, *params)
+        msg = f"Static pointing model not setup for '{band}' in SCU client."
+        logger.info(msg)
+        return ResultCode.NOT_EXECUTED, msg, None
 
     # ---------------------------
     # Convenience command methods
