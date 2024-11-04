@@ -1971,14 +1971,15 @@ class SteeringControlUnit:
     # ---------------------
     # Static pointing model
     # ---------------------
-    def import_static_pointing_model(self, file_path: Path) -> None:
+    def import_static_pointing_model(self, file_path: Path) -> str | None:
         """
-        Import static pointing model parameters for a specified band from a JSON file.
+        Import static pointing model parameters from a JSON file.
 
         The static pointing model is only imported to a variable of the SCU instance,
         and not written to a (possibly) connected DSC.
 
         :param file_path: Path to the JSON file to load.
+        :return: The specified band the model is for, or `None` if the import failed.
         """
         sp_model = StaticPointingModel(SPM_SCHEMA_PATH)
         if sp_model.read_gpm_json(file_path):
@@ -1988,6 +1989,8 @@ class SteeringControlUnit:
                 f"Successfully imported static pointing model from '{str(file_path)}' "
                 f"for '{band}'."
             )
+            return band
+        return None
 
     def export_static_pointing_model(
         self,

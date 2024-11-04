@@ -123,7 +123,7 @@ class StaticPointingModel:
         # The global pointing model dict's minimal structure needed to pass validation
         self._gpm_dict: dict[str, JSONData] = {
             "interface": self.INTERFACE_PREFIX + self.VERSION,
-            "antenna": "SKAxxx",
+            "antenna": "SKA000",
             "band": None,
             "coefficients": {},
         }
