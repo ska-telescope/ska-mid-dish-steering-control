@@ -418,8 +418,8 @@ class SteeringControlUnit:
         self._subscription_handler = None
         self._subscriptions: dict = {}
         self._subscription_queue: queue.Queue = queue.Queue()
-        self._user: int | None = None
-        self._session_id: ua.UInt16 | None = None
+        self._user = ua.UInt16(0)  # NoAuthority
+        self._session_id = ua.UInt16(0)
         self._server_url: str
         self._server_str_id: str
         self._plc_prg: Node
@@ -866,26 +866,14 @@ class SteeringControlUnit:
         user_int = (
             self.convert_enum_to_int("DscCmdAuthorityType", user)
             if isinstance(user, str)
-            else user
+            else ua.UInt16(user)
         )
-        if user_int == 2:  # HHP
-            code = ResultCode.NOT_EXECUTED
-            msg = "SCU cannot take authority as HHP user"
-            logger.info("TakeAuth command not executed, as %s", msg)
-        elif self._user is None or (self._user is not None and self._user < user_int):
-            code, msg, vals = self.commands[Command.TAKE_AUTH.value](
-                ua.UInt16(user_int)
-            )
-            if code == ResultCode.COMMAND_DONE:
-                self._user = user_int
-                self._session_id = ua.UInt16(vals[0])
-            else:
-                logger.error("TakeAuth command failed with message '%s'", msg)
+        code, msg, vals = self.commands[Command.TAKE_AUTH.value](user_int)
+        if code == ResultCode.COMMAND_DONE:
+            self._user = user_int
+            self._session_id = ua.UInt16(vals[0])
         else:
-            user_str = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
-            code = ResultCode.NOT_EXECUTED
-            msg = f"SCU already has command authority with user {user_str}"
-            logger.info("TakeAuth command not executed, as %s", msg)
+            logger.error("TakeAuth command failed with message '%s'", msg)
         return code, msg
 
     def release_authority(self) -> tuple[ResultCode, str]:
@@ -894,24 +882,15 @@ class SteeringControlUnit:
 
         :return: The result of the command execution.
         """
-        if self._user is not None and self._session_id is not None:
-            code, msg, _ = self.commands[Command.RELEASE_AUTH.value](
-                ua.UInt16(self._user)
+        code, msg, _ = self.commands[Command.RELEASE_AUTH.value](self._user)
+        if code == ResultCode.COMMAND_DONE:
+            self._session_id = ua.UInt16(0)
+        elif code == ResultCode.NO_CMD_AUTH:
+            user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
+            logger.info(
+                "SCU lost command authority as user '%s' to another client.", user
             )
-            if code == ResultCode.COMMAND_DONE:
-                self._user, self._session_id = None, None
-            elif code in [ResultCode.NO_CMD_AUTH, ResultCode.COMMAND_FAILED]:
-                user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
-                logger.info(
-                    "SCU has already lost command authority as user '%s' to "
-                    "another client.",
-                    user,
-                )
-                self._user, self._session_id = None, None
-        else:
-            code = ResultCode.NOT_EXECUTED
-            msg = "SCU has no command authority to release."
-            logger.info(msg)
+            self._session_id = ua.UInt16(0)
         return code, msg
 
     # ---------------
@@ -1029,12 +1008,6 @@ class SteeringControlUnit:
             """
             result_code = None
             result_output = None
-            if need_authority and self._session_id is None:
-                return (
-                    ResultCode.NOT_EXECUTED,
-                    "SCU has no command authority to execute requested command",
-                    result_output,
-                )
             try:
                 cmd_args = [self._session_id, *args] if need_authority else [*args]
                 logger.debug(
@@ -1064,11 +1037,10 @@ class SteeringControlUnit:
                 elif result_code == ResultCode.NO_CMD_AUTH:
                     user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
                     logger.info(
-                        "SCU has lost command authority as user '%s' to "
-                        "another client.",
+                        "SCU lost command authority as user '%s' to another client.",
                         user,
                     )
-                    self._user, self._session_id = None, None
+                    self._session_id = ua.UInt16(0)
             except ConnectionError as e:
                 result_code = ResultCode.CONNECTION_CLOSED
                 result_msg = f"asyncua exception: {str(e)}"
@@ -1733,7 +1705,7 @@ class SteeringControlUnit:
         :param result_callback: Callback with result code and message when task finishes
         :return: The result of the command execution.
         """
-        if self._session_id is None:
+        if not self._session_id:
             msg = "Need to take command authority before loading a track table."
             logger.error(msg)
             return ResultCode.NOT_EXECUTED, msg
@@ -1908,7 +1880,7 @@ class SteeringControlUnit:
             azi.extend(padding)
             ele.extend(padding)
 
-        if self._session_id is None:
+        if not self._session_id:
             return (
                 ResultCode.NOT_EXECUTED,
                 "Lost authority while loading track table "

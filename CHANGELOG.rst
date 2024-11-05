@@ -12,6 +12,7 @@ Unreleased
     - WOM-484: Updated ``subscribe()`` to subscribe to all input nodes in one OPCUA call.
     - WOM-446, WOM-464: Added missing commands to the ``Command`` enum.
     - WOM-464: Added ``ServerStatus.CurrentTime`` key to ``nodes`` and ``attributes`` properties that reads the server's local time.
+    - WOM-506: Updated the command authority checks to not block sending a 'TakeAuth' or 'ReleaseAuth' command under any circumstance.
 - Documentation:
     - KAR-1198: Updated 'How to use SCU'.
 - Bug fixes:
