@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ska-mid-dish-steering-control"
-version = "0.0.1"
+version = "0.1.0"
 description = "Python module that interfaces with the OPCUA protocol of the dish structure controller"
 authors = ["Your Name <you@example.com>"]
 license = "Copyright 2020 SKA Observatory"
