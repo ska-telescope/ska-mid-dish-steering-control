@@ -842,10 +842,20 @@ class SteeringControlUnit:
                         f"ns={self._ns_idx};s=@{type_name}.EnumValues"
                     )
                     new_enum = self._create_enum_from_node(type_name, enum_node)
-                    self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
-                    setattr(ua, type_name, new_enum)
-                except (RuntimeError, ValueError):
+                except ua.UaStatusCodeError:
+                    try:  # For CETC sim v4.4
+                        enum_node = self._client.get_node(
+                            f"ns={self._ns_idx};s={type_name}.EnumStrings"
+                        )
+                        new_enum = self._create_enum_from_node(type_name, enum_node)
+                    except (ua.UaStatusCodeError, ValueError):
+                        missing_types.append(type_name)
+                        continue
+                except ValueError:
                     missing_types.append(type_name)
+                    continue
+                self._opcua_enum_types.update({type_name: new_enum})  # type: ignore
+                setattr(ua, type_name, new_enum)
         if missing_types:
             logger.warning(
                 "OPC-UA server does not implement the following Enumerated types "
@@ -940,9 +950,13 @@ class SteeringControlUnit:
         if not isinstance(enum_values, list):
             raise ValueError(f"Expected a list of EnumValueType for node '{name}'.")
         enum_dict = {}
-        for value in enum_values:
-            display_name = value.DisplayName.Text
-            enum_dict[display_name] = value.Value
+        for i, value in enumerate(enum_values):
+            try:
+                display_name = value.DisplayName.Text
+                enum_dict[display_name] = value.Value
+            except AttributeError:  # For CETC sim v4.4
+                display_name = value.Text
+                enum_dict[display_name] = i
         return IntEnum(name, enum_dict)
 
     def _create_command_function(

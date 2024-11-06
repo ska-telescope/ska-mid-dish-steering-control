@@ -17,6 +17,7 @@ Unreleased
     - KAR-1198: Updated 'How to use SCU'.
 - Bug fixes:
     - WOM-492: Catch ``ConnectionError`` exception when trying to unsubscribe after connection has been closed.
+    - WOM-509: Manually create enumeration data types from nodes for CETC simulator v4.4 compatibility.
 
 
 Older history
