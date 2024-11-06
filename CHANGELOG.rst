@@ -1,8 +1,8 @@
 Changelog
 ---------
 
-Unreleased
-^^^^^^^^^^
+0.1.0
+^^^^^
 
 - API changes:
     - WOM-479: Removed redundant ``get_enum_strings()`` method. Use ``get_attribute_data_type()`` instead.
