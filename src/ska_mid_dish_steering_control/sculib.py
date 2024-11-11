@@ -1663,6 +1663,7 @@ class SteeringControlUnit:
 
         :param uid: The ID of the user to unsubscribe.
         """
+        self._scu_weather_station_subscriptions.pop(uid, None)
         subscription = self._subscriptions.pop(uid, None)
         if subscription is not None:
             try:
@@ -1674,8 +1675,6 @@ class SteeringControlUnit:
                     handle_exception(e, f"Tried to unsubscribe from {uid}."),
                     self.event_loop,
                 )
-        else:
-            self._scu_weather_station_subscriptions.pop(uid, None)
 
     def unsubscribe_all(self) -> None:
         """Unsubscribe all subscriptions."""
@@ -2302,6 +2301,11 @@ class SteeringControlUnit:
     # Weather Station
     # ---------------
     def list_weather_station_sensors(self) -> list[str]:
+        """
+        List all the sensors available on the connected weather station.
+
+        :return: A list of sensors names.
+        """
         if self._weather_station is not None:
             return [sensor.name for sensor in self._weather_station._sensors]
 
@@ -2358,16 +2362,19 @@ class SteeringControlUnit:
             self._weather_station_attributes.append(scu_name)
 
         def weather_station_callback(datapoints):
-            with self._weather_station_cache_lock:
-                for sensor, datapoint in datapoints.items():
-                    new_value = datapoint["value"]
-                    old_value = self._weather_station_cache[sensor]["value"]
+            for sensor, datapoint in datapoints.items():
+                new_value = datapoint["value"]
+                old_value = self._weather_station_cache[sensor]["value"]
+                if new_value != old_value:
+                    with self._weather_station_cache_lock:
+                        self._weather_station_cache[sensor] = {
+                            "value": new_value,
+                            "timestamp": datapoint["timestamp"],
+                        }
+
                     scu_name = f"weather.station.{sensor}"
                     for subscription in self._scu_weather_station_subscriptions.values():
-                        if (
-                            new_value != old_value
-                            and scu_name in subscription["sensors"]
-                        ):
+                        if scu_name in subscription["sensors"]:
                             subscription["data_queue"].put(
                                 {
                                     "name": scu_name,
@@ -2377,11 +2384,6 @@ class SteeringControlUnit:
                                 block=True,
                                 timeout=0.1,
                             )
-
-                    self._weather_station_cache[sensor] = {
-                        "value": new_value,
-                        "timestamp": datapoint["timestamp"],
-                    }
 
         self._weather_station_subscription = self._weather_station.subscribe_data(
             weather_station_callback
