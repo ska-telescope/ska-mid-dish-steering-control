@@ -127,7 +127,7 @@ from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
-from ska_mid_wms.wms_interface import WeatherStation
+from ska_mid_wms.wms_interface import SensorEnum, WeatherStation
 
 from . import utils
 from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
@@ -1548,7 +1548,7 @@ class SteeringControlUnit:
     # --------------------
     # OPC-UA subscriptions
     # --------------------
-    # pylint: disable=dangerous-default-value
+    # pylint: disable=dangerous-default-value,too-many-branches
     def subscribe(
         self,
         attributes: str | list[str],
@@ -1610,9 +1610,12 @@ class SteeringControlUnit:
                     self.event_loop,
                 ).result()
             except ua.UaStatusCodeError as e:
-                # Exceptions are only generated when subscribe_data_change is called with a
-                # single node input.
-                msg = f"Failed to subscribe to node '{subscribe_nodes[0].nodeid.to_string()}'"
+                # Exceptions are only generated when subscribe_data_change is called
+                # with a single node input.
+                msg = (
+                    "Failed to subscribe to node "
+                    f"'{subscribe_nodes[0].nodeid.to_string()}'"
+                )
                 asyncio.run_coroutine_threadsafe(
                     handle_exception(e, msg), self.event_loop
                 )
@@ -2304,10 +2307,13 @@ class SteeringControlUnit:
         """
         List all the sensors available on the connected weather station.
 
+        These are all the sensors that COULD be polled, not necessarily the ones that
+        ARE currently polled (see change_weather_station_sensors).
+
         :return: A list of sensors names.
         """
         if self._weather_station is not None:
-            return [sensor.name for sensor in self._weather_station._sensors]
+            return [sensor.name for sensor in self._weather_station.available_sensors]
 
         return []
 
@@ -2316,6 +2322,8 @@ class SteeringControlUnit:
         ws_cache = self._weather_station_cache
 
         class ws_ro_attribute:
+            # pylint: disable=missing-class-docstring,invalid-name
+            # pylint: disable=missing-function-docstring
             @property
             def value(self) -> Any:
                 try:
@@ -2345,6 +2353,7 @@ class SteeringControlUnit:
         return ws_ro_attribute()
 
     def _update_weather_station_sensors(self, sensors):
+        """Create SCU atttributes and subscribe to the list of input sensors."""
         if self._weather_station is None:
             return
 
@@ -2373,7 +2382,9 @@ class SteeringControlUnit:
                         }
 
                     scu_name = f"weather.station.{sensor}"
-                    for subscription in self._scu_weather_station_subscriptions.values():
+                    for (
+                        subscription
+                    ) in self._scu_weather_station_subscriptions.values():
                         if scu_name in subscription["sensors"]:
                             subscription["data_queue"].put(
                                 {
@@ -2390,14 +2401,30 @@ class SteeringControlUnit:
         )
 
     def _clear_weather_station_attributes(self):
+        """Remove the weather station sensor from the attributes dict."""
         for sensor in self._weather_station_attributes:
             self._attributes.pop(sensor, None)
 
         self._weather_station_attributes = []
 
-    def change_weather_station_sensors(self, new_sensors):
+    def change_weather_station_sensors(self, new_sensors: list[str]) -> None:
+        """
+        Change the weather station sensors that are polled.
+
+        These are all the sensors that WILL be polled, not an exhaustive list of sensors
+        sensors that COULD be polled (see list_weather_station_sensors).
+
+        :param new_sensors: The new list of sensors to be polled.
+        """
         if self._weather_station is None:
             logger.error("No weather station connected, cannot change sensors.")
+            return
+
+        if self._scu_weather_station_subscriptions:
+            logger.error(
+                "Cannot change weather station sensors while a subscription "
+                "to a sensor is ongoing."
+            )
             return
 
         available_sensors = self.list_weather_station_sensors()
@@ -2411,6 +2438,13 @@ class SteeringControlUnit:
                 return
 
         self._clear_weather_station_attributes()
+        if self._weather_station_subscription:
+            self._weather_station.unsubscribe_data(self._weather_station_subscription)
+            self._weather_station_subscription = None
+
+        self._weather_station.configure_poll_sensors(
+            [SensorEnum(sensor) for sensor in new_sensors]
+        )
         self._update_weather_station_sensors(new_sensors)
 
     def connect_weather_station(self, config: str, address: str, port: int) -> None:
