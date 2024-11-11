@@ -168,6 +168,10 @@ class ROAttribute(Protocol):  # noqa: D101
     def value(self) -> Any:  # noqa: D102
         pass
 
+    @property
+    def timestamp(self) -> Any:  # noqa: D102
+        pass
+
 
 class RWAttribute(Protocol):  # noqa: D101
     """Protocol type for an OPC UA read-write attribute."""
@@ -183,6 +187,10 @@ class RWAttribute(Protocol):  # noqa: D101
 
     @value.setter
     def value(self, value: Any) -> None:
+        pass
+
+    @property
+    def timestamp(self) -> Any:  # noqa: D102
         pass
 
 
@@ -232,6 +240,10 @@ def create_rw_attribute(
                 msg = f"Failed to write value of node: {node_name}={_value}"
                 asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
 
+        @property
+        def timestamp(self) -> None:
+            raise NotImplementedError
+
     return opc_ua_rw_attribute()
 
 
@@ -265,6 +277,10 @@ def create_ro_attribute(
                 msg = f"Failed to read value of node: {node_name}"
                 asyncio.run_coroutine_threadsafe(handle_exception(e, msg), event_loop)
                 return None
+
+        @property
+        def timestamp(self) -> None:
+            raise NotImplementedError
 
     return opc_ua_ro_attribute()
 
@@ -348,6 +364,7 @@ class CachedNodesDict(TypedDict):
 NodeDict = dict[str, tuple[Node, int]]
 AttrDict = dict[str, ROAttribute | RWAttribute]
 CmdDict = dict[str, Callable[..., CmdReturn]]
+WSSubDict = dict[int, dict[str, list[str] | queue.Queue]]
 
 
 # pylint: disable=too-many-public-methods,too-many-instance-attributes
@@ -443,9 +460,9 @@ class SteeringControlUnit:
         self._weather_station: WeatherStation | None = None
         self._weather_station_subscription = None
         self._weather_station_cache = None
-        self._weather_station_cache_lock = None
-        self._weather_station_attributes = []
-        self._scu_weather_station_subscriptions = {}
+        self._weather_station_cache_lock: threading.Lock = None
+        self._weather_station_attributes: list[str] = []
+        self._scu_weather_station_subscriptions: WSSubDict = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -2317,13 +2334,26 @@ class SteeringControlUnit:
 
         return []
 
-    def _create_ro_ws_attribute(self, sensor):
-        ws_cache_lock = self._weather_station_cache_lock
-        ws_cache = self._weather_station_cache
+    def _create_ro_ws_attribute(
+        self,
+        sensor: str,
+        ws_cache: dict[str, dict[str, float | datetime.datetime]],
+        ws_cache_lock: threading.Lock,
+    ) -> ROAttribute:
+        """
+        Create a read only weather station attribute.
+
+        :param sensor: Sensor name.
+        :return: A read only attribute for the input sensor.
+        """
 
         class ws_ro_attribute:
             # pylint: disable=missing-class-docstring,invalid-name
             # pylint: disable=missing-function-docstring
+            @property
+            def ua_node(self) -> None:
+                raise NotImplementedError
+
             @property
             def value(self) -> Any:
                 try:
@@ -2367,7 +2397,9 @@ class SteeringControlUnit:
             }
             # Add to attributes
             scu_name = f"weather.station.{sensor}"
-            self._attributes[scu_name] = self._create_ro_ws_attribute(sensor)
+            self._attributes[scu_name] = self._create_ro_ws_attribute(
+                sensor, self._weather_station_cache, self._weather_station_cache_lock
+            )
             self._weather_station_attributes.append(scu_name)
 
         def weather_station_callback(datapoints):

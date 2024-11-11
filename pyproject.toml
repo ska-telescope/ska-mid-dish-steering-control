@@ -20,7 +20,7 @@ jsonschema-specifications = "^2024.10.1"
 referencing = "^0.35.1"
 attrs = "^24.2.0"
 cffi = "^1.17.1"
-ska-mid-wms = {git = "git@gitlab.com:ska-telescope/ska-mid-wms.git", rev = "main"}
+ska-mid-wms = {git = "https://gitlab.com/ska-telescope/ska-mid-wms.git", branch = "main"}
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"
