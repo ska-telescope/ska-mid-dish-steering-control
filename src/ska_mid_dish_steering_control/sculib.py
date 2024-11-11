@@ -127,6 +127,7 @@ from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
+from ska_mid_wms.wms_interface import WeatherStation
 
 from . import utils
 from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
@@ -439,6 +440,12 @@ class SteeringControlUnit:
         self._track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[IntEnum]] = {}
         self._static_pointing: dict[str, StaticPointingModel] = {}
+        self._weather_station: WeatherStation | None = None
+        self._weather_station_subscription = None
+        self._weather_station_cache = None
+        self._weather_station_cache_lock = None
+        self._weather_station_attributes = []
+        self._scu_weather_station_subscriptions = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -504,6 +511,7 @@ class SteeringControlUnit:
         self.release_authority()
         self.unsubscribe_all()
         self.disconnect()
+        self.disconnect_weather_station()
         self.cleanup_resources()
 
     def cleanup_resources(self) -> None:
@@ -888,7 +896,8 @@ class SteeringControlUnit:
         elif code == ResultCode.NO_CMD_AUTH:
             user = self.convert_int_to_enum("DscCmdAuthorityType", self._user)
             logger.info(
-                "SCU lost command authority as user '%s' to another client.", user
+                "SCU lost command authority as user '%s' to another client.",
+                user,
             )
             self._session_id = ua.UInt16(0)
         return code, msg
@@ -1468,6 +1477,10 @@ class SteeringControlUnit:
                 # returns a 7-element array.
                 return [attribute]
 
+            if attribute in self._weather_station_attributes:
+                # TODO Check whether a weather station sensor can be a different type.
+                return ["Double"]
+
             node, _ = self.nodes[attribute]
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
@@ -1544,11 +1557,12 @@ class SteeringControlUnit:
         bad_shutdown_callback: Callable[[str], None] | None = None,
     ) -> tuple[int, list, list]:
         """
-        Subscribe to OPC-UA attributes for event updates.
+        Subscribe to SCU attributes for event updates.
 
-        :param attributes: A single OPC-UA attribute or a list of attributes to
+        :param attributes: A single SCU attribute or a list of attributes to
             subscribe to.
-        :param period: The period in milliseconds for checking attribute updates.
+        :param period: The period in milliseconds for checking attribute updates
+            (ignored for weather station sensors).
         :param data_queue: A queue to store the subscribed attribute data. If None, uses
             the default subscription queue.
         :return: unique identifier for the subscription and lists of missing/bad nodes.
@@ -1565,11 +1579,15 @@ class SteeringControlUnit:
                 attributes,
             ]
         nodes = []
+        sensors = []
         missing_nodes = []
+        bad_nodes = []
         for attribute in attributes:
             if attribute != "":
                 if attribute in self.nodes:
                     nodes.append(self.nodes[attribute][0])
+                elif attribute in self._weather_station_attributes:
+                    sensors.append(attribute)
                 else:
                     missing_nodes.append(attribute)
         if len(missing_nodes) > 0:
@@ -1578,45 +1596,65 @@ class SteeringControlUnit:
                 "subscribed for event updates: %s",
                 missing_nodes,
             )
-        subscription = asyncio.run_coroutine_threadsafe(
-            self._client.create_subscription(period, subscription_handler),
-            self.event_loop,
-        ).result()
-        subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
-        bad_nodes = []
-        try:
-            handles = asyncio.run_coroutine_threadsafe(
-                subscription.subscribe_data_change(subscribe_nodes), self.event_loop
-            ).result()
-        except ua.UaStatusCodeError as e:
-            # Exceptions are only generated when subscribe_data_change is called with a
-            # single node input.
-            msg = (
-                f"Failed to subscribe to node '{subscribe_nodes[0].nodeid.to_string()}'"
-            )
-            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
-            bad_nodes.append(subscribe_nodes[0])
-            subscribe_nodes.pop(0)
-
-        # subscribe_data_change returns an int for a single node, and a list for
-        # mulitple nodes
-        if isinstance(handles, int):
-            handles = list(handles)
-        # The list contains ints for sucessful subscriptions, and status codes when
-        # the subscription has failed.
-        else:
-            for i, node in enumerate(subscribe_nodes):
-                if isinstance(handles[i], ua.uatypes.StatusCode):
-                    bad_nodes.append(node)
-                    subscribe_nodes.pop(i)
-                    handles.pop(i)
 
         uid = time.monotonic_ns()
-        self._subscriptions[uid] = {
-            "handles": handles,
-            "nodes": subscribe_nodes,
-            "subscription": subscription,
-        }
+        if nodes:
+            subscription = asyncio.run_coroutine_threadsafe(
+                self._client.create_subscription(period, subscription_handler),
+                self.event_loop,
+            ).result()
+            subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
+            try:
+                handles = asyncio.run_coroutine_threadsafe(
+                    subscription.subscribe_data_change(subscribe_nodes),
+                    self.event_loop,
+                ).result()
+            except ua.UaStatusCodeError as e:
+                # Exceptions are only generated when subscribe_data_change is called with a
+                # single node input.
+                msg = f"Failed to subscribe to node '{subscribe_nodes[0].nodeid.to_string()}'"
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), self.event_loop
+                )
+                bad_nodes.append(subscribe_nodes[0])
+                subscribe_nodes.pop(0)
+
+            # subscribe_data_change returns an int for a single node, and a list for
+            # mulitple nodes
+            if isinstance(handles, int):
+                handles = list(handles)
+            # The list contains ints for sucessful subscriptions, and status codes when
+            # the subscription has failed.
+            else:
+                for i, node in enumerate(subscribe_nodes):
+                    if isinstance(handles[i], ua.uatypes.StatusCode):
+                        bad_nodes.append(node)
+                        subscribe_nodes.pop(i)
+                        handles.pop(i)
+
+            self._subscriptions[uid] = {
+                "handles": handles,
+                "nodes": subscribe_nodes,
+                "subscription": subscription,
+            }
+
+        if sensors:
+            # Send one value on first subscription of weather station sensor
+            for sensor in sensors:
+                data_queue.put(
+                    {
+                        "name": sensor,
+                        "value": self._attributes[sensor].value,
+                        "source_timestamp": self._attributes[sensor].timestamp,
+                    },
+                    block=True,
+                    timeout=0.1,
+                )
+            self._scu_weather_station_subscriptions[uid] = {
+                "sensors": sensors,
+                "data_queue": data_queue,
+            }
+
         return uid, missing_nodes, bad_nodes
 
     def unsubscribe(self, uid: int) -> None:
@@ -1625,21 +1663,8 @@ class SteeringControlUnit:
 
         :param uid: The ID of the user to unsubscribe.
         """
-        subscription = self._subscriptions.pop(uid)
-        try:
-            _ = asyncio.run_coroutine_threadsafe(
-                subscription["subscription"].delete(), self.event_loop
-            ).result()
-        except ConnectionError as e:
-            asyncio.run_coroutine_threadsafe(
-                handle_exception(e, f"Tried to unsubscribe from {uid}."),
-                self.event_loop,
-            )
-
-    def unsubscribe_all(self) -> None:
-        """Unsubscribe all subscriptions."""
-        while len(self._subscriptions) > 0:
-            uid, subscription = self._subscriptions.popitem()
+        subscription = self._subscriptions.pop(uid, None)
+        if subscription is not None:
             try:
                 _ = asyncio.run_coroutine_threadsafe(
                     subscription["subscription"].delete(), self.event_loop
@@ -1649,6 +1674,16 @@ class SteeringControlUnit:
                     handle_exception(e, f"Tried to unsubscribe from {uid}."),
                     self.event_loop,
                 )
+        else:
+            self._scu_weather_station_subscriptions.pop(uid, None)
+
+    def unsubscribe_all(self) -> None:
+        """Unsubscribe all subscriptions."""
+        uids = list(self._subscriptions.keys()) + list(
+            self._scu_weather_station_subscriptions.keys()
+        )
+        for uid in uids:
+            self.unsubscribe(uid)
 
     def get_subscription_values(self) -> list[dict]:
         """
@@ -2262,6 +2297,150 @@ class SteeringControlUnit:
         """
         logger.info(f"offset az: {az_offset:.4f} el: {el_offset:.4f}")
         return self.commands[Command.TRACK_LOAD_STATIC_OFF.value](az_offset, el_offset)
+
+    # ---------------
+    # Weather Station
+    # ---------------
+    def list_weather_station_sensors(self) -> list[str]:
+        if self._weather_station is not None:
+            return [sensor.name for sensor in self._weather_station._sensors]
+
+        return []
+
+    def _create_ro_ws_attribute(self, sensor):
+        ws_cache_lock = self._weather_station_cache_lock
+        ws_cache = self._weather_station_cache
+
+        class ws_ro_attribute:
+            @property
+            def value(self) -> Any:
+                try:
+                    with ws_cache_lock:
+                        return ws_cache[sensor]["value"]
+                except Exception as e:
+                    logger.error(
+                        "Failed to read value of sensor: weather.station.%s: %s",
+                        sensor,
+                        e,
+                    )
+                    return None
+
+            @property
+            def timestamp(self) -> Any:
+                try:
+                    with ws_cache_lock:
+                        return ws_cache[sensor]["timestamp"]
+                except Exception as e:
+                    logger.error(
+                        "Failed to read value of sensor: weather.station.%s: %s",
+                        sensor,
+                        e,
+                    )
+                    return None
+
+        return ws_ro_attribute()
+
+    def _update_weather_station_sensors(self, sensors):
+        if self._weather_station is None:
+            return
+
+        self._weather_station_cache = {}
+        self._weather_station_cache_lock = threading.Lock()
+        self._weather_station_attributes = []
+        for sensor in sensors:
+            self._weather_station_cache[sensor] = {
+                "value": None,
+                "timestamp": None,  # TODO handle None timestamp (subscription?)
+            }
+            # Add to attributes
+            scu_name = f"weather.station.{sensor}"
+            self._attributes[scu_name] = self._create_ro_ws_attribute(sensor)
+            self._weather_station_attributes.append(scu_name)
+
+        def weather_station_callback(datapoints):
+            with self._weather_station_cache_lock:
+                for sensor, datapoint in datapoints.items():
+                    new_value = datapoint["value"]
+                    old_value = self._weather_station_cache[sensor]["value"]
+                    scu_name = f"weather.station.{sensor}"
+                    for subscription in self._scu_weather_station_subscriptions.values():
+                        if (
+                            new_value != old_value
+                            and scu_name in subscription["sensors"]
+                        ):
+                            subscription["data_queue"].put(
+                                {
+                                    "name": scu_name,
+                                    "value": new_value,
+                                    "source_timestamp": datapoint["timestamp"],
+                                },
+                                block=True,
+                                timeout=0.1,
+                            )
+
+                    self._weather_station_cache[sensor] = {
+                        "value": new_value,
+                        "timestamp": datapoint["timestamp"],
+                    }
+
+        self._weather_station_subscription = self._weather_station.subscribe_data(
+            weather_station_callback
+        )
+
+    def _clear_weather_station_attributes(self):
+        for sensor in self._weather_station_attributes:
+            self._attributes.pop(sensor, None)
+
+        self._weather_station_attributes = []
+
+    def change_weather_station_sensors(self, new_sensors):
+        if self._weather_station is None:
+            logger.error("No weather station connected, cannot change sensors.")
+            return
+
+        available_sensors = self.list_weather_station_sensors()
+        for sensor in new_sensors:
+            if sensor not in available_sensors:
+                logger.error(
+                    "Sensor %s is not available in the connected weather station, "
+                    "cannot change sensors.",
+                    sensor,
+                )
+                return
+
+        self._clear_weather_station_attributes()
+        self._update_weather_station_sensors(new_sensors)
+
+    def connect_weather_station(self, config: str, address: str, port: int) -> None:
+        """
+        Connect to a weather station and start polling.
+
+        :param address: The IP addresss of the weather station.
+        :param port: The port of the weather station.
+        :param config: The weather station config file.
+        """
+        self._weather_station = WeatherStation(config, address, port, logger)
+        self._weather_station.connect()
+        self._weather_station.start_polling()
+
+        # Default to all sensors in config file
+        sensors = self.list_weather_station_sensors()
+        self.change_weather_station_sensors(sensors)
+
+    def disconnect_weather_station(self) -> None:
+        """Disconnect from the weather station, if any."""
+        if self._weather_station is None:
+            return
+
+        self._scu_weather_station_subscriptions = {}
+        self._weather_station.unsubscribe_data(self._weather_station_subscription)
+        self._weather_station_subscription = None
+        self._weather_station.stop_polling()
+        self._weather_station.disconnect()
+        self._clear_weather_station_attributes()
+        self._weather_station_cache = None
+        self._weather_station_cache_lock = None
+        self._weather_station = None
 
 
 # pylint: disable=too-many-arguments, invalid-name

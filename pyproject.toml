@@ -20,6 +20,7 @@ jsonschema-specifications = "^2024.10.1"
 referencing = "^0.35.1"
 attrs = "^24.2.0"
 cffi = "^1.17.1"
+ska-mid-wms = {git = "git@gitlab.com:ska-telescope/ska-mid-wms.git", rev = "main"}
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"
@@ -27,7 +28,7 @@ flake8 = "^6.0.0"
 isort = "^5.12.0"
 pylint = "^3.3.1"
 pylint-junit = "^0.3.4"
-pytest = "^7.3.1"
+pytest = ">=7.3.1"
 pytest-cov = "^4.1.0"
 pytest-forked = "^1.4.0"
 pytest-json-report = "^1.4.1"
