@@ -429,10 +429,10 @@ class SteeringControlUnit:
         self._attributes: AttrDict
         self._commands: CmdDict
         self._plc_prg_nodes_timestamp: str
-        self._parameter: Node
         self._parameter_ns_idx: int
-        self._parameter_nodes: NodeDict
-        self._parameter_attributes: AttrDict
+        self._parameter: Node  # TODO: Could be undefined
+        self._parameter_nodes: NodeDict  # TODO: Could be undefined
+        self._parameter_attributes: AttrDict  # TODO: Could be undefined
         self._track_table_queue: queue.Queue | None = None
         self._stop_track_table_schedule_task_event: threading.Event | None = None
         self._track_table_scheduled_task: Future | None = None
