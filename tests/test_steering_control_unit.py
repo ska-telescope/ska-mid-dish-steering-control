@@ -4,42 +4,39 @@ from datetime import datetime
 from time import sleep
 
 import pytest
+from conftest import PLC_IP
+from packaging.version import Version
 
 # from asyncua.ua import UaError
 from pytest import LogCaptureFixture
 
-from ska_mid_dish_steering_control import SteeringControlUnit
+from ska_mid_dish_steering_control import SCU, SteeringControlUnit, sculib
 
-# from pprint import pprint
-# from typing import Generator
+CETC_SIM_VERSION = "4.4"
+PLC_VERSION = "0.0.4"
 
 
 @pytest.fixture(name="scu")
 def scu_fixture(request: pytest.FixtureRequest) -> SteeringControlUnit:  # type: ignore
     """Fixture to select which connected SCU to use."""
     # Switch between two fixtures defined in conftest.py
-    with_cetc_simulator = request.config.getoption("--with-cetc-sim")
     with_plc = request.config.getoption("--with-plc")
-    # if with_cetc_simulator:
-    scu: SteeringControlUnit = request.getfixturevalue("scu_cetc_simulator")
     if with_plc:
-        scu = request.getfixturevalue("scu_mid_itf_plc")
+        scu: SteeringControlUnit = request.getfixturevalue("scu_mid_itf_plc")
+    else:
+        scu = request.getfixturevalue("scu_cetc_simulator")
     # Setup simulator/PLC before running test
-    if with_cetc_simulator or with_plc:
-        pass
-        # ALWAYS NEEDED:
-        # scu.take_authority("LMC")
-        # The following setup is only needed if running tests individually for debugging
-        # scu.stow(False)
-        # scu.activate_dmc("AzEl")
-        # scu.activate_dmc("Fi")
+    # scu.take_authority("LMC")
+    # The following setup is only needed if running tests individually for debugging
+    # scu.stow(False)
+    # scu.activate_dmc("AzEl")
+    # scu.activate_dmc("Fi")
     yield scu
     # Stop any running slews and release authority after test (also done if test failed)
-    if with_cetc_simulator or with_plc:
-        # The following setup is only needed if running tests individually for debugging
-        # scu.stop("AzEl")
-        # scu.stop("Fi")
-        sleep(0.5)
+    # The following setup is only needed if running tests individually for debugging
+    # scu.stop("AzEl")
+    # scu.stop("Fi")
+    sleep(0.5)
 
 
 # pylint: disable=protected-access,unused-argument
@@ -50,7 +47,7 @@ class TestSetupTeardown:
         self: "TestSetupTeardown",
         scu: SteeringControlUnit,
     ) -> None:
-        """Test the client-server connection."""
+        """Test SCU's cleanup method."""
         scu.disconnect_and_cleanup()
         assert scu._subscriptions == {}
         assert scu._client is None
@@ -60,57 +57,94 @@ class TestSetupTeardown:
         self: "TestSetupTeardown",
         scu: SteeringControlUnit,
         caplog: LogCaptureFixture,
+        request: pytest.FixtureRequest,
     ) -> None:
-        """Test the client-server connection."""
+        """Test the client-server connection setup."""
         scu.connect_and_setup()
-        expected_log = [
-            # "Connecting to: opc.tcp://127.0.0.1:4841/dish-structure/server/",
-            "Successfully connected to server and initialised SCU client",
-        ]
+        if request.config.getoption("--with-plc"):
+            expected_log = [
+                f"Connecting to: opc.tcp://{PLC_IP}:4840",
+                "Successfully connected to server and initialised SCU client",
+            ]
+        else:
+            expected_log = [
+                "Connecting to: opc.tcp://127.0.0.1:4840/OPCUA/SimpleServer",
+                "Successfully connected to server and initialised SCU client",
+            ]
         for message in expected_log:
             assert message in caplog.messages
 
-    # def test_connection_reset(
-    #     self: "TestSetupTeardown",
-    #     scu: SteeringControlUnit,
-    #     caplog: LogCaptureFixture,
-    # ) -> None:
-    #     """Test the client-server connection."""
-    #     assert scu.is_connected()
-    #     scu.connection_reset()
-    #     # expected_log = [
-    #     #     "Connecting to: opc.tcp://127.0.0.1:4841/dish-structure/server/"
-    #     # ]
-    #     # for message in expected_log:
-    #     #     assert message in caplog.messages
+    def test_connection_reset(
+        self: "TestSetupTeardown",
+        scu: SteeringControlUnit,
+        caplog: LogCaptureFixture,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Test the client-server connection."""
+        assert scu.is_connected()
+        scu.connection_reset()
+        if request.config.getoption("--with-plc"):
+            expected_log = [
+                f"Connecting to: opc.tcp://{PLC_IP}:4840",
+            ]
+        else:
+            expected_log = [
+                "Connecting to: opc.tcp://127.0.0.1:4840/OPCUA/SimpleServer",
+            ]
+        for message in expected_log:
+            assert message in caplog.messages
 
-    # @pytest.mark.skip(reason="WIP")
-    # def test_as_context_manager(
-    #     self: "TestSetupTeardown", ds_simulator_opcua_server_mock: Generator
-    # ) -> None:
-    #     """Test using SCU as a context manager."""
-    #     with SteeringControlUnit(
-    #         port=4841,
-    #         endpoint="/dish-structure/server/",
-    #         namespace="http://skao.int/DS_ICD/",
-    #         timeout=25,
-    #     ) as scu:
-    #         assert scu.server_version == "ds_icd_0.0.11_mock.xml"
+    def test_as_context_manager(self: "TestSetupTeardown") -> None:
+        """Test using SCU as a context manager."""
+        with SteeringControlUnit(
+            port=4840,
+            endpoint="/OPCUA/SimpleServer",
+            namespace="CETC54",
+            timeout=25,
+        ) as scu:
+            assert scu.server_version == CETC_SIM_VERSION
 
-    # @pytest.mark.skip(reason="WIP")
-    # def test_generator_with_encryption(
-    #     self: "TestSetupTeardown", ds_simulator_opcua_server_mock: Generator
-    # ) -> None:
-    #     """Test using SCU generator and connecting with a username & password."""
-    #     with pytest.raises(ConnectionRefusedError):
-    #         SCU(
-    #             port=4841,
-    #             endpoint="/dish-structure/server/",
-    #             namespace="http://skao.int/DS_ICD/",
-    #             username="LMC",
-    #             password="lmc",
-    #             timeout=30,
-    #         )
+    def test_connection_failure(
+        self: "TestSetupTeardown",
+        caplog: LogCaptureFixture,
+    ) -> None:
+        """Test result of failed connection."""
+        with pytest.raises(Exception):
+            SCU(port=4841)
+            expected_log = [
+                "Connecting to: opc.tcp://127.0.0.1:4841",
+                "Cannot connect to the OPC UA server. Please "
+                "check the connection parameters that were "
+                "passed to instantiate the sculib!",
+            ]
+            for message in expected_log:
+                assert message in caplog.messages
+
+    def test_incompatible_cetc_sim_version(
+        self: "TestSetupTeardown",
+        caplog: LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test connecting to incompatible CETC simulator version."""
+        monkeypatch.setattr(sculib, "COMPATIBLE_CETC_SIM_VER", Version("100.0.0"))
+        with pytest.raises(
+            RuntimeError,
+            match=f"SCU not compatible with v{CETC_SIM_VERSION} of CETC "
+            "simulator, only v100.0.0 and up",
+        ):
+            scu = SCU(
+                port=4840,
+                endpoint="/OPCUA/SimpleServer",
+                namespace="CETC54",
+                timeout=25,
+            )
+            expected_log = [
+                "Connecting to: opc.tcp://127.0.0.1:4840/OPCUA/SimpleServer",
+                f"SCU not compatible with v{scu.server_version} of CETC "
+                "simulator, only v100.0.0 and up",
+            ]
+            for message in expected_log:
+                assert message in caplog.messages
 
 
 class TestGeneral:
@@ -122,17 +156,19 @@ class TestGeneral:
         """Test the properties."""
         with_plc = request.config.getoption("--with-plc")
         if with_plc:
-            assert scu.server_version == "0.0.3"
+            assert scu.server_version == PLC_VERSION
         else:
-            assert scu.server_version == "4.4"
-        # else:
-        #     assert scu.server_version == "ds_icd_0.0.11_mock.xml"
+            assert scu.server_version == CETC_SIM_VERSION
         assert scu.nodes != {}
         assert scu.attributes != {}
         assert scu.commands != {}
         assert isinstance(datetime.fromisoformat(scu.plc_prg_nodes_timestamp), datetime)
-        assert scu.parameter_nodes == {}
-        assert scu.parameter_attributes == {}
+        if with_plc:
+            assert scu.parameter_nodes != {}
+            assert scu.parameter_attributes != {}
+        else:
+            assert scu.parameter_nodes == {}
+            assert scu.parameter_attributes == {}
         assert scu.opcua_enum_types != {}
 
     def test_authority_commands(

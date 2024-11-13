@@ -32,5 +32,3 @@ python-test:
   services:
     - name: registry.gitlab.com/ska-telescope/ska-te-dish-structure-simulator/ska-te-ds-web-sim:0.11.0
       alias: cetc-simulator
-      # Optionally specify command if needed
-      # command: ["sh", "-c", "docker-entrypoint.sh"]
