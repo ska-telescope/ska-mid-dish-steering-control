@@ -58,6 +58,9 @@ profile = "black"
 [tool.black] # See https://black.readthedocs.io/en/stable/usage_and_configuration/the_basics.html#configuration-format
 line-length = 88
 
+[tool.pytest.ini_options]
+addopts = "-v --tb=native"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

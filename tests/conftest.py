@@ -1,6 +1,7 @@
 """Tests configuration."""
 
 import logging
+from time import sleep
 
 import pytest
 
@@ -25,17 +26,19 @@ def scu_cetc_simulator_fixture() -> SteeringControlUnit:  # type: ignore
         scu.disconnect_and_cleanup()
     else:
         scu.cleanup_resources()
+    sleep(0.5)
 
 
 @pytest.fixture(name="scu_mid_itf_plc", scope="class")
 def scu_mid_itf_plc_fixture() -> SteeringControlUnit:  # type: ignore
     """Steering Control Unit connected to the PLC at the MID-ITF."""
-    scu = SCU(host=PLC_IP, use_nodes_cache=True, authority_name="LMC")
+    scu = SCU(host=PLC_IP, use_nodes_cache=True, authority_name="LMC", timeout=15)
     yield scu
     if scu.is_connected():
         scu.disconnect_and_cleanup()
     else:
         scu.cleanup_resources()
+    sleep(0.5)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

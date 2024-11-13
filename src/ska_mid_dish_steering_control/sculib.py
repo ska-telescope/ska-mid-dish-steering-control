@@ -1481,7 +1481,9 @@ class SteeringControlUnit:
                 # returns a 7-element array.
                 return [attribute]
 
-            node, _ = self.nodes[attribute]
+            node, _ = self.nodes.get(attribute, (None, None))
+            if node is None:
+                return []
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
             ).result()

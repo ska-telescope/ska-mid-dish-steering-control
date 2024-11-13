@@ -42,6 +42,13 @@ python-pre-test:
 		sleep 6; \
 	fi
 
+# Allow pytest to fail, and still execute 'python-post-test'
+python-do-test:
+	@$(PYTHON_RUNNER) pytest --version -c /dev/null
+	@mkdir -p build
+	-$(PYTHON_VARS_BEFORE_PYTEST) $(PYTHON_RUNNER) pytest $(PYTHON_VARS_AFTER_PYTEST) \
+	 --cov=$(PYTHON_SRC) --cov-report=term-missing --cov-report html:build/reports/code-coverage --cov-report xml:build/reports/code-coverage.xml --junitxml=build/reports/unit-tests.xml $(PYTHON_TEST_FILE)
+
 python-post-test:
 	@if docker ps -q --filter "name=$(CONTAINER_NAME)" | grep -q .; then \
 		echo "Stopping the CETC54 simulator container..."; \
@@ -50,7 +57,6 @@ python-post-test:
 		echo "CETC54 simulator container is not running."; \
 	fi
 endif
-
 
 ########################################################################
 # OCI, HELM, K8S

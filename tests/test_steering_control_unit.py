@@ -1,16 +1,22 @@
 """Tests for the SteeringControlUnit."""
 
+import os
 from datetime import datetime
+from pathlib import Path
 from time import sleep
 
 import pytest
 from conftest import PLC_IP
 from packaging.version import Version
-
-# from asyncua.ua import UaError
 from pytest import LogCaptureFixture
 
-from ska_mid_dish_steering_control import SCU, SteeringControlUnit, sculib
+from ska_mid_dish_steering_control import (
+    SCU,
+    Command,
+    ResultCode,
+    SteeringControlUnit,
+    sculib,
+)
 
 CETC_SIM_VERSION = "4.4"
 PLC_VERSION = "0.0.4"
@@ -25,17 +31,7 @@ def scu_fixture(request: pytest.FixtureRequest) -> SteeringControlUnit:  # type:
         scu: SteeringControlUnit = request.getfixturevalue("scu_mid_itf_plc")
     else:
         scu = request.getfixturevalue("scu_cetc_simulator")
-    # Setup simulator/PLC before running test
-    # scu.take_authority("LMC")
-    # The following setup is only needed if running tests individually for debugging
-    # scu.stow(False)
-    # scu.activate_dmc("AzEl")
-    # scu.activate_dmc("Fi")
     yield scu
-    # Stop any running slews and release authority after test (also done if test failed)
-    # The following setup is only needed if running tests individually for debugging
-    # scu.stop("AzEl")
-    # scu.stop("Fi")
     sleep(0.5)
 
 
@@ -101,6 +97,7 @@ class TestSetupTeardown:
             endpoint="/OPCUA/SimpleServer",
             namespace="CETC54",
             timeout=25,
+            use_nodes_cache=True,
         ) as scu:
             assert scu.server_version == CETC_SIM_VERSION
 
@@ -178,10 +175,11 @@ class TestGeneral:
     ) -> None:
         """Test the commands."""
         scu.take_authority("EGUI")
+        session_id = scu._session_id
         scu.release_authority()
         expected_log = [
             "Calling command node '2:TakeAuth' with args list: [3]",
-            # "Calling command node '2:ReleaseAuth' with args list: [0, 0]",
+            f"Calling command node '2:ReleaseAuth' with args list: [{session_id}, 3]",
         ]
         for message in expected_log:
             assert message in caplog.messages
@@ -208,12 +206,100 @@ class TestGeneral:
         self: "TestGeneral", scu: SteeringControlUnit
     ) -> None:
         """Test get_attribute_data_type method."""
-        # Test with a known attribute
         data_type = scu.get_attribute_data_type("Pointing.Status.CurrentPointing")
         assert isinstance(data_type, list)
         assert data_type == ["Pointing.Status.CurrentPointing"]
+        data_type = scu.get_attribute_data_type("NonExistentAttribute")
+        assert isinstance(data_type, list)
+        assert data_type == []
 
-        # Test with an unknown attribute
-        # data_type = scu.get_attribute_data_type("UnknownAttribute")
-        # assert isinstance(data_type, list)
-        # assert data_type == ["Unknown"]
+    def test_axis_commands(self: "TestGeneral", scu: SteeringControlUnit) -> None:
+        """Test the axis commands methods."""
+        assert scu.take_authority("EGUI") == (ResultCode.COMMAND_DONE, "CommandDone")
+        done = (ResultCode.COMMAND_DONE, "CommandDone", None)
+        activated = (ResultCode.COMMAND_ACTIVATED, "CommandActivated", None)
+        assert scu.activate_az() == done
+        assert scu.activate_el() == done
+        assert scu.activate_fi() == done
+        sleep(0.5)
+        assert scu.abs_azimuth(20.0, 1.0) == activated
+        assert scu.abs_elevation(30.0, 1.0) == activated
+        assert scu.abs_feed_indexer(30.0, 2.0) == activated
+        sleep(0.5)
+        azim = scu.convert_enum_to_int("AxisSelectType", "Az")
+        assert scu.commands[Command.STOP.value](azim) == done
+        elev = scu.convert_enum_to_int("AxisSelectType", "El")
+        assert scu.commands[Command.STOP.value](elev) == done
+        feed = scu.convert_enum_to_int("AxisSelectType", "Fi")
+        assert scu.commands[Command.STOP.value](feed) == done
+        sleep(0.5)
+        assert scu.abs_azel(20.0, 30.0, 1.0, 1.0) == activated
+        sleep(0.5)
+        azel = scu.convert_enum_to_int("AxisSelectType", "AzEl")
+        assert scu.commands[Command.STOP.value](azel) == done
+        sleep(0.5)
+        assert scu.deactivate_az() == done
+        assert scu.deactivate_el() == done
+        assert scu.deactivate_fi() == done
+        sleep(0.5)
+        assert scu.move_to_band("Band_1") == activated
+        assert scu.interlock_acknowledge_dmc() == (
+            ResultCode.COMMAND_REJECTED,
+            "CommandRejected",
+            None,
+        )
+        assert scu.reset_dmc(azim) == (
+            ResultCode.AXIS_NOT_ACTIVATED,
+            "AxisNotActivated",
+            None,
+        )
+
+    def test_static_pointing_methods(
+        self: "TestGeneral",
+        scu: SteeringControlUnit,
+        caplog: LogCaptureFixture,
+    ) -> None:
+        """Test the static pointing model methods."""
+        scu.import_static_pointing_model(Path("nonexistent.json"))
+        assert (
+            "Caught exception trying to read file 'nonexistent.json': "
+            "[Errno 2] No such file or directory: 'nonexistent.json'" in caplog.messages
+        )
+        scu.export_static_pointing_model("Band_3")
+        assert (
+            "Static pointing model not setup for 'Band_3' in SCU client."
+            in caplog.messages
+        )
+        scu.setup_static_pointing_model("Band_3")
+        assert (
+            "Static pointing model not setup for 'Band_3' in SCU client."
+            in caplog.messages
+        )
+        assert scu.read_static_pointing_model("Band_2") != {}
+        assert (
+            "Creating new StaticPointingModel instance for 'Band_2'." in caplog.messages
+        )
+        scu.import_static_pointing_model(Path("tests/resources/gpm-SKA063-Band_2.json"))
+        assert (
+            "Successfully imported static pointing model from "
+            "'tests/resources/gpm-SKA063-Band_2.json' for 'Band_2'." in caplog.messages
+        )
+        scu.set_static_pointing_value("Band_2", "IA", 10.0)
+        assert scu.get_static_pointing_value("Band_2", "IA") == 10.0
+        assert scu.setup_static_pointing_model("Band_2") == (
+            ResultCode.COMMAND_DONE,
+            "CommandDone",
+            None,
+        )
+        scu.export_static_pointing_model("Band_2")
+        assert (
+            "Successfully exported 'Band_2' static pointing model." in caplog.messages
+        )
+        assert os.path.exists("gpm-SKA063-Band_2.json")
+        os.remove("gpm-SKA063-Band_2.json")
+        scu.export_static_pointing_model("Band_2", antenna="SKA100")
+        assert os.path.exists("gpm-SKA100-Band_2.json")
+        os.remove("gpm-SKA100-Band_2.json")
+        scu.export_static_pointing_model("Band_2", Path("Band_2.json"))
+        assert os.path.exists("Band_2.json")
+        os.remove("Band_2.json")
