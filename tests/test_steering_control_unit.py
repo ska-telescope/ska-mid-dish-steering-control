@@ -131,8 +131,8 @@ class TestGeneral:
         assert scu.attributes != {}
         assert scu.commands != {}
         assert isinstance(datetime.fromisoformat(scu.plc_prg_nodes_timestamp), datetime)
-        assert not hasattr(scu, "parameter_nodes")
-        assert not hasattr(scu, "parameter_attributes")
+        assert scu.parameter_nodes == {}
+        assert scu.parameter_attributes == {}
         assert scu.opcua_enum_types != {}
 
     def test_authority_commands(
