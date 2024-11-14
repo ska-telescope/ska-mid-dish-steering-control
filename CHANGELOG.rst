@@ -1,6 +1,10 @@
 Changelog
 ---------
 
+0.1.1
+^^^^^
+    - WOM-520: Fix track load method with the track load node parent's call_method
+
 0.1.0
 ^^^^^
 
@@ -18,7 +22,6 @@ Changelog
 - Bug fixes:
     - WOM-492: Catch ``ConnectionError`` exception when trying to unsubscribe after connection has been closed.
     - WOM-509: Manually create enumeration data types from nodes for CETC simulator v4.4 compatibility.
-    - WOM-520: Fix track load method with the track load node parent's call_method
 
 
 Older history
