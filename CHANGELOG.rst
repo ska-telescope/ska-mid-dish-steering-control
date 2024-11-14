@@ -1,6 +1,10 @@
 Changelog
 ---------
 
+0.1.1
+^^^^^
+    - WOM-520: Fix track load method with the track load node parent's call_method
+
 0.1.0
 ^^^^^
 
