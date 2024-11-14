@@ -1817,8 +1817,15 @@ class SteeringControlUnit:
         self._track_table = table_kwargs["track_table"]
         mode = table_kwargs["mode"]
         result_callback = table_kwargs["result_callback"]
+        # Create the call method here so it only happens once
+        track_load_node = self.nodes[Command.TRACK_LOAD_TABLE.value][0]
+        track_load_parent = await track_load_node.get_parent()
+
+        async def track_load_method(args):
+            return await track_load_parent.call_method(track_load_node, *args)
+
         # One call in case mode is "New"
-        result_code, result_msg = await self._load_next_points(mode)
+        result_code, result_msg = await self._load_next_points(track_load_method, mode)
         first_load.set()
         # Then keep calling until local track table is empty or PLC is full
         while not stop_scheduling.is_set() and result_code != ResultCode.NOT_EXECUTED:
@@ -1872,10 +1879,12 @@ class SteeringControlUnit:
                 self._track_table = table_kwargs["track_table"]
                 result_callback = table_kwargs["result_callback"]
 
-            result_code, result_msg = await self._load_next_points()
+            result_code, result_msg = await self._load_next_points(track_load_method)
         logger.debug("Async track table loading: %s", result_msg)
 
-    async def _load_next_points(self, mode: int = 0) -> tuple[ResultCode, str]:
+    async def _load_next_points(
+        self, track_load_method: Callable, mode: int = 0
+    ) -> tuple[ResultCode, str]:
         num, tai, azi, ele = self._track_table.get_next_points(1000)
         logger.debug(f"_load_next_points got {num} points")
 
@@ -1910,8 +1919,7 @@ class SteeringControlUnit:
             azi,
             ele,
         ]
-        track_load_node = self.nodes[Command.TRACK_LOAD_TABLE.value][0]
-        result_code = await track_load_node.call_method(track_load_node, *load_args)
+        result_code = await track_load_method(load_args)
         result_code, result_msg = self._validate_command_result_code(result_code)
         if result_code not in (
             ResultCode.COMMAND_DONE,
