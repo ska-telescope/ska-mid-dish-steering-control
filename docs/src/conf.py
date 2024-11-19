@@ -8,6 +8,7 @@
 #  sphinx-apidoc -o ./src/modules/ ../src/ska-mid-dish-steering-control/
 
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.abspath("../../src"))
@@ -19,8 +20,31 @@ project = "SKA-Mid Dish Structure Steering Control Unit"
 copyright = "2024, SKAO"
 author = "Team Wombat"
 
-# The full version, including alpha/beta/rc tags
-release = "0.1.1"
+
+def get_version():
+    with open(os.path.abspath("../../.release")) as f:
+        for line in f:
+            if line.startswith("release"):
+                return line.strip().removeprefix("release=")
+
+
+def get_release():
+    result = subprocess.run(
+        ["git", "describe", "--tags", "--always", "HEAD"],
+        check=True,
+        capture_output=True,
+    )
+    return result.stdout.decode()
+
+
+# The version info for the project you're documenting, acts as replacement for
+# |version| and |release|, also used in various other places throughout the
+# built documents.
+#
+# The short X.Y version.
+version = get_version()
+# The full version, including alpha/beta/rc tags.
+release = get_release()
 
 
 # -- General configuration ---------------------------------------------------
