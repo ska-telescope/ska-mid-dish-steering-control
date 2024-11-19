@@ -107,16 +107,14 @@ In case an attribute is not writeable, the OPC UA server will report an error:
 # pylint: disable=too-many-lines, broad-exception-caught, too-many-positional-arguments
 import asyncio
 import datetime
-import enum
 import json
 import logging
-import logging.config
 import queue
 import socket
 import threading
 import time
 from concurrent.futures import Future
-from enum import IntEnum
+from enum import Enum, IntEnum
 from functools import cached_property
 from importlib import resources
 from pathlib import Path
@@ -1514,7 +1512,7 @@ class SteeringControlUnit:
         except AttributeError:
             pass
         else:
-            if issubclass(ua_type, enum.Enum):
+            if issubclass(ua_type, Enum):
                 enum_list = [""] * (max(e.value for e in ua_type) + 1)
                 for e in ua_type:
                     enum_list[e.value] = e.name
