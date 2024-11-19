@@ -163,3 +163,7 @@ cython_debug/
 
 resources/git-hooks
 *ignore.py
+
+# CETC54 certificates
+src/ska_mid_dish_steering_control/certs/cert.der
+src/ska_mid_dish_steering_control/certs/key.pem

@@ -93,3 +93,15 @@ separate thread to monitor events being added to a queue:
 To subscribe to multiple OPC UA nodes, Pass a list instead of string. eg
 
     scu.subscribe(["Management.Status.DscState", "Safety.Status.StowPinStatus"],100,attr_monit_queue)
+
+## Tests
+
+The unit tests of the ``SteeringControlUnit`` must be run with an instance connected to the CETC simulator or PLC. The CETC simulator is used by default locally and in the CI python-test job. 
+
+In order to run the tests locally, you need the latest CETC simulator image (named 'simulator' and tagged with a version number) already built in your local docker image registry from [ska-te-dish-structure-simulator](https://gitlab.com/ska-telescope/ska-te-dish-structure-simulator). The ``make python-test`` target should always be used, as it executes a pre- and post-target to start and stop the container. If you want to run individual tests, you need to use:
+
+    make python-test PYTHON_TEST_FILE=tests/test_steering_control_unit.py::...
+
+To run the tests (only some will be) against the PLC at the Mid-ITF, use the defined custom pytest option:
+
+    make python-test PYTHON_VARS_AFTER_PYTEST=--with-plc

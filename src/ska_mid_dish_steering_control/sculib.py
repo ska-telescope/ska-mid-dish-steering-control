@@ -415,24 +415,23 @@ class SteeringControlUnit:
         # Other local variables
         self._client: Client | None = None
         self._event_loop_thread: threading.Thread | None = None
-        self._subscription_handler = None
         self._subscriptions: dict = {}
         self._subscription_queue: queue.Queue = queue.Queue()
         self._user = ua.UInt16(0)  # NoAuthority
         self._session_id = ua.UInt16(0)
-        self._server_url: str
-        self._server_str_id: str
-        self._plc_prg: Node
-        self._ns_idx: int
-        self._nodes: NodeDict
-        self._nodes_reversed: dict[Node, str]
-        self._attributes: AttrDict
-        self._commands: CmdDict
-        self._plc_prg_nodes_timestamp: str
-        self._parameter: Node
-        self._parameter_ns_idx: int
-        self._parameter_nodes: NodeDict
-        self._parameter_attributes: AttrDict
+        self._server_url: str = ""
+        self._server_str_id: str = ""
+        self._plc_prg: Node | None = None
+        self._ns_idx: int = 2  # Default is first physical controller
+        self._nodes: NodeDict = {}
+        self._nodes_reversed: dict[Node, str] = {}
+        self._attributes: AttrDict = {}
+        self._commands: CmdDict = {}
+        self._plc_prg_nodes_timestamp: str = ""
+        self._parameter_ns_idx: int | None = None
+        self._parameter: Node | None = None
+        self._parameter_nodes: NodeDict = {}
+        self._parameter_attributes: AttrDict = {}
         self._track_table_queue: queue.Queue | None = None
         self._stop_track_table_schedule_task_event: threading.Event | None = None
         self._track_table_scheduled_task: Future | None = None
@@ -1482,7 +1481,9 @@ class SteeringControlUnit:
                 # returns a 7-element array.
                 return [attribute]
 
-            node, _ = self.nodes[attribute]
+            node, _ = self.nodes.get(attribute, (None, None))
+            if node is None:
+                return []
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
             ).result()
