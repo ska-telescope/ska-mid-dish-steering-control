@@ -1659,7 +1659,7 @@ class SteeringControlUnit:
 
     def unsubscribe_all(self) -> None:
         """Unsubscribe all subscriptions."""
-        for uid in self._subscriptions:
+        for uid in self._subscriptions.copy():
             self.unsubscribe(uid)
 
     def get_subscription_values(self) -> list[dict]:
