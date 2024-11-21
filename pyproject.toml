@@ -1,9 +1,9 @@
 [tool.poetry]
 name = "ska-mid-dish-steering-control"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python module that interfaces with the OPCUA protocol of the dish structure controller"
 authors = ["Your Name <you@example.com>"]
-license = "Copyright 2020 SKA Observatory"
+license = "Copyright 2024 SKA Observatory"
 readme = "README.md"
 
 [[tool.poetry.source]]
@@ -20,6 +20,7 @@ jsonschema-specifications = "^2024.10.1"
 referencing = "^0.35.1"
 attrs = "^24.2.0"
 cffi = "^1.17.1"
+packaging = "^24.2"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"

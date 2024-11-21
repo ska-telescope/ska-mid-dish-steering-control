@@ -1,9 +1,14 @@
 Changelog
 ---------
 
+0.1.2
+^^^^^
+- WOM-424: Added missing 'packaging' dependency.
+- WOM-454: Prevent ``subscribe()`` from failing if none of the input attributes are in the node dict.
+
 0.1.1
 ^^^^^
-    - WOM-520: Fix track load method with the track load node parent's call_method
+- WOM-520: Fix track load method with the track load node parent's call_method.
 
 0.1.0
 ^^^^^
