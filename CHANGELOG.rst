@@ -4,7 +4,7 @@ Changelog
 0.1.2
 ^^^^^
 - WOM-424: Added missing 'packaging' dependency.
-- WOM-454: Prevent ``subscribe()`` from failing if none of the input attributes are in the node dict.
+- WOM-454: Prevent ``subscribe()`` from failing if none of the input attributes are in the node dict and lower logging call level in method.
 
 0.1.1
 ^^^^^

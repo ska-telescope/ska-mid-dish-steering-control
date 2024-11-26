@@ -1588,9 +1588,9 @@ class SteeringControlUnit:
                 else:
                     missing_nodes.append(attribute)
         if len(missing_nodes) > 0:
-            logger.warning(
-                "The following OPC-UA attributes not found in nodes dict and not "
-                "subscribed for event updates: %s",
+            logger.debug(
+                "The following attributes were not found on the OPCUA server and not "
+                "subscribed to for event updates: %s",
                 missing_nodes,
             )
         subscription = asyncio.run_coroutine_threadsafe(
