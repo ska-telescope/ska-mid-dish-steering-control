@@ -125,6 +125,7 @@ from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
 from packaging.version import InvalidVersion, Version
+from typing_extensions import NotRequired
 
 from . import utils
 from .constants import USER_CACHE_DIR, CmdReturn, Command, ResultCode, __version__
@@ -137,6 +138,8 @@ COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
 SPM_SCHEMA_PATH: Final = Path(
     resources.files(__package__) / "schemas/ska-mid-dish-gpm.json"  # type: ignore
 )
+
+PLC_PRG: Final = "PLC_PRG"
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -334,10 +337,18 @@ class SubscriptionHandler:
                 )
 
 
+class CachedNodeDetails(TypedDict):
+    """Inidividual cached node details."""
+
+    opcua_node_str: str
+    node_class: int
+    attribute_type: NotRequired[list[str]]
+
+
 class CachedNodesDict(TypedDict):
     """Cached nodes dictionary type."""
 
-    node_ids: dict[str, tuple[str, int]]
+    node_ids: dict[str, CachedNodeDetails]
     timestamp: str
 
 
@@ -436,6 +447,7 @@ class SteeringControlUnit:
         self._track_table: TrackTable | None = None
         self._opcua_enum_types: dict[str, Type[IntEnum]] = {}
         self._static_pointing: dict[str, StaticPointingModel] = {}
+        self._attribute_types_cache: dict[str, list[str]] = {}
 
     def connect_and_setup(self) -> None:
         """
@@ -501,6 +513,8 @@ class SteeringControlUnit:
         self.release_authority()
         self.unsubscribe_all()
         self.disconnect()
+        # Store any updates to attribute data types.
+        self._cache_node_ids(self._nodes_cache_dir / f"{PLC_PRG}.json", self._nodes)
         self.cleanup_resources()
 
     def cleanup_resources(self) -> None:
@@ -1101,6 +1115,42 @@ class SteeringControlUnit:
     # -----------------------------
     # Node dictionaries and caching
     # -----------------------------
+    def _retreive_cached_data(self, file_path):
+        """
+        Retrieve cached nodes from json.
+
+        Checks whether the cache file is in the old format (node details as list) or in
+        the new format (node details as dict). If the cache file is still the old
+        format, the data is updated to the new format before being returned.
+        """
+        data = utils.load_json_file(file_path)
+        # Check cache file format
+        try:
+            # Pop an item and return to check load success.
+            a, b = data.popitem()
+            data[a] = b
+        except (AttributeError, KeyError):
+            # No file or empty dict.
+            return None
+
+        c, test_details = data[a]["node_ids"].popitem()
+        data[a]["node_ids"][c] = test_details
+        if isinstance(test_details, list):
+            # Old format, update file to use dicts for node details.
+            for server_id, server_info in data.items():
+                for scu_node_str, node_info in server_info["node_ids"].items():
+                    node_class = node_info[1]
+                    details_dict = {
+                        "opcua_node_str": node_info[0],
+                        "node_class": node_class,
+                    }
+                    if node_class == 2:
+                        details_dict["attribute_type"] = ["Unknown"]
+
+                    data[server_id]["node_ids"][scu_node_str] = details_dict
+
+        return data
+
     def _cache_node_ids(self, file_path: Path, nodes: NodeDict) -> None:
         """
         Cache Node IDs.
@@ -1108,6 +1158,7 @@ class SteeringControlUnit:
         Create a dictionary of Node names with their unique Node ID and node class
         and write it to a new or existing JSON file with the OPC-UA server address
         as key.
+        For nodes of type attribute, also add the data type if known.
 
         :param file_path: of JSON file to load.
         :param nodes: dictionary of Nodes to cache.
@@ -1117,14 +1168,22 @@ class SteeringControlUnit:
             try:
                 node, node_class = tup
                 if key != "":
-                    node_ids[key] = (node.nodeid.to_string(), node_class)
+                    node_ids[key] = {
+                        "opcua_node_str": node.nodeid.to_string(),
+                        "node_class": node_class,
+                    }
+                    if node_class == 2:
+                        node_ids[key]["attribute_type"] = (
+                            self._get_cached_attribute_data_type(key)
+                        )
+
             except TypeError as exc:
                 logger.debug("TypeError with dict value %s: %s", tup, exc)
         cached_data: dict[str, CachedNodesDict] = (
-            utils.load_json_file(file_path) or {}  # type: ignore
+            self._retreive_cached_data(file_path) or {}  # type: ignore
         )
         cached_data[self._server_str_id] = {
-            "node_ids": node_ids,
+            "node_ids": node_ids,  # type: ignore
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1152,7 +1211,7 @@ class SteeringControlUnit:
         This method may raise exceptions related to asyncio operations.
         """
         # Create node dicts of the PLC_PRG node's tree
-        top_node_name = "PLC_PRG"
+        top_node_name = PLC_PRG
         self._plc_prg = asyncio.run_coroutine_threadsafe(
             self._client.nodes.objects.get_child(
                 [
@@ -1208,7 +1267,11 @@ class SteeringControlUnit:
             well as a string timestamp of when the dicts were generated.
         """
         cache_file_path = self._nodes_cache_dir / f"{top_level_node_name}.json"
-        cache = utils.load_json_file(cache_file_path) if self._use_nodes_cache else None
+        cache = (
+            self._retreive_cached_data(cache_file_path)
+            if self._use_nodes_cache
+            else None
+        )
         cached_nodes: CachedNodesDict | None = (
             cache.get(self._server_str_id)  # type: ignore
             if cache is not None
@@ -1229,10 +1292,14 @@ class SteeringControlUnit:
         return *node_dicts, timestamp
 
     def _generate_node_dicts_from_cache(
-        self, cache_dict: dict[str, tuple[str, int]], top_level_node_name: str
+        self,
+        cache_dict: dict[str, CachedNodeDetails],
+        top_level_node_name: str,
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
         Generate dicts for nodes, attributes, and commands from a cache.
+
+        Also retrieves attribute data type information.
 
         :param top_level_node_name: Name of the top-level node.
         :return: A tuple containing dictionaries for nodes, attributes and commands.
@@ -1245,15 +1312,17 @@ class SteeringControlUnit:
         nodes: NodeDict = {}
         attributes: AttrDict = {}
         commands: CmdDict = {}
-        for node_name, tup in cache_dict.items():
-            node_id, node_class = tup
-            node = self._client.get_node(node_id)
+        for node_name, node_details in cache_dict.items():
+            node_id = node_details["opcua_node_str"]
+            node_class = node_details["node_class"]
+            node: Node = self._client.get_node(node_id)
             nodes[node_name] = (node, node_class)
             if node_class == 2:
-                # An attribute. Add it to the attributes dict.
+                # An attribute. Add it to the attributes dict and retrieve the type.
                 attributes[node_name] = create_rw_attribute(
                     node, self.event_loop, node_name
                 )
+                self._attribute_types_cache[node_name] = node_details["attribute_type"]
             elif node_class == 4:
                 # A command. Add it to the commands dict.
                 commands[node_name] = self._create_command_function(
@@ -1463,6 +1532,13 @@ class SteeringControlUnit:
         logger.debug("\n".join(nodes.keys()))
         return list(nodes.keys())
 
+    def _get_cached_attribute_data_type(self, attribute: str) -> list[str]:
+        try:
+            # Return a copy so that self._attribute_types_cache cannot be touched.
+            return self._attribute_types_cache[attribute].copy()
+        except KeyError:
+            return ["Unknown"]
+
     def get_attribute_data_type(self, attribute: str | ua.uatypes.NodeId) -> list[str]:
         """
         Get the data type for the given node.
@@ -1473,15 +1549,22 @@ class SteeringControlUnit:
         string in the list is the enum value + 1.
         """
         dt_id = ""
+        ret = ["Unknown"]
         if isinstance(attribute, str):
-            if attribute == "Pointing.Status.CurrentPointing":
+            cached_type = self._get_cached_attribute_data_type(attribute)
+            if cached_type != ret:
+                logger.debug("Found cached type %s for %s", cached_type, attribute)
+                return cached_type
+
+            if attribute.endswith("Pointing.Status.CurrentPointing"):
                 # Special case where the ICD type is Double but the node actually
                 # returns a 7-element array.
+                self._attribute_types_cache[attribute] = [attribute]
                 return [attribute]
 
             node, _ = self.nodes.get(attribute, (None, None))
             if node is None:
-                return []
+                return ret
             dt_id = asyncio.run_coroutine_threadsafe(
                 node.read_data_type(), self.event_loop
             ).result()
@@ -1504,7 +1587,7 @@ class SteeringControlUnit:
             "UInt32",
         ]
         if dt_name in instant_types:
-            return [dt_name]
+            ret = [dt_name]
 
         # load_data_type_definitions() called in connect() adds new classes to the
         # asyncua.ua module.
@@ -1519,9 +1602,11 @@ class SteeringControlUnit:
                     enum_list[e.value] = e.name
 
                 enum_list.insert(0, "Enumeration")
-                return enum_list
+                ret = enum_list
 
-        return ["Unknown"]
+        self._attribute_types_cache[attribute] = ret
+        logger.debug("Found type %s for %s", ret, attribute)
+        return self._get_cached_attribute_data_type(attribute)
 
     def get_node_descriptions(self, node_list: list[str]) -> list[tuple[str, str]]:
         """
@@ -1843,6 +1928,7 @@ class SteeringControlUnit:
             ):
                 msg = (
                     f"Failed to load all points to PLC. Reason: {result_msg}. "
+                    f"Result code: {result_code}. "
                     f"{self._track_table.remaining_points()} remaining from "
                     f"{self._track_table.get_details_string()}."
                 )
@@ -1921,6 +2007,7 @@ class SteeringControlUnit:
             azi,
             ele,
         ]
+        logger.info("Calling track load with the following args: %s", load_args)
         result_code = await track_load_method(load_args)
         result_code, result_msg = self._validate_command_result_code(result_code)
         if result_code not in (
