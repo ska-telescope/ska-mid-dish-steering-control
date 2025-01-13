@@ -18,7 +18,7 @@ from ska_mid_dish_steering_control import (
     sculib,
 )
 
-CETC_SIM_VERSION = "4.4"
+CETC_SIM_VERSION = "4.5"
 PLC_VERSION = "0.0.4"
 
 
