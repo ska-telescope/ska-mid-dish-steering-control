@@ -1555,6 +1555,7 @@ class SteeringControlUnit:
         period: int = 100,
         data_queue: queue.Queue | None = None,
         bad_shutdown_callback: Callable[[str], None] | None = None,
+        subscription_handler: SubscriptionHandler | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1567,12 +1568,17 @@ class SteeringControlUnit:
         :return: unique identifier for the subscription and lists of missing/bad nodes.
         :param bad_shutdown_callback: will be called if a BadShutdown subscription
             status notification is received, defaults to None.
+        :param subscription_handler: Allows for a SubscriptionHandler instance to be
+            reused, rather than creating a new instance every time.
+            There is a limit on the number of handlers a server can have.
+            Defaults to None.
         """
         if data_queue is None:
             data_queue = self._subscription_queue
-        subscription_handler = SubscriptionHandler(
-            data_queue, self._nodes_reversed, bad_shutdown_callback
-        )
+        if not subscription_handler:
+            subscription_handler = SubscriptionHandler(
+                data_queue, self._nodes_reversed, bad_shutdown_callback
+            )
         if not isinstance(attributes, list):
             attributes = [
                 attributes,
