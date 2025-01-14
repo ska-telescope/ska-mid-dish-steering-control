@@ -1555,7 +1555,7 @@ class SteeringControlUnit:
         period: int = 100,
         data_queue: queue.Queue | None = None,
         bad_shutdown_callback: Callable[[str], None] | None = None,
-        subscription_handler: SubscriptionHandler | None = None,
+        subscription: Any | None = None,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1575,10 +1575,6 @@ class SteeringControlUnit:
         """
         if data_queue is None:
             data_queue = self._subscription_queue
-        if not subscription_handler:
-            subscription_handler = SubscriptionHandler(
-                data_queue, self._nodes_reversed, bad_shutdown_callback
-            )
         if not isinstance(attributes, list):
             attributes = [
                 attributes,
@@ -1599,10 +1595,14 @@ class SteeringControlUnit:
                 "subscribed to for event updates: %s",
                 missing_nodes,
             )
-        subscription = asyncio.run_coroutine_threadsafe(
-            self._client.create_subscription(period, subscription_handler),
-            self.event_loop,
-        ).result()
+        if not subscription:
+            subscription_handler = SubscriptionHandler(
+                data_queue, self._nodes_reversed, bad_shutdown_callback
+            )
+            subscription = asyncio.run_coroutine_threadsafe(
+                self._client.create_subscription(period, subscription_handler),
+                self.event_loop,
+            ).result()
         if nodes:
             subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
             try:
