@@ -1173,9 +1173,9 @@ class SteeringControlUnit:
                         "node_class": node_class,
                     }
                     if node_class == 2:
-                        node_ids[key]["attribute_type"] = (
-                            self._get_cached_attribute_data_type(key)
-                        )
+                        node_ids[key][
+                            "attribute_type"
+                        ] = self._get_cached_attribute_data_type(key)
 
             except TypeError as exc:
                 logger.debug("TypeError with dict value %s: %s", tup, exc)
@@ -1607,6 +1607,11 @@ class SteeringControlUnit:
         self._attribute_types_cache[attribute] = ret
         logger.debug("Found type %s for %s", ret, attribute)
         return self._get_cached_attribute_data_type(attribute)
+
+    def fetch_all_attribute_types(self) -> None:
+        """Prompt SCU to cache the types of all attributes."""
+        for attribute in self.attributes:
+            self.get_attribute_data_type(attribute)
 
     def get_node_descriptions(self, node_list: list[str]) -> list[tuple[str, str]]:
         """
