@@ -1,6 +1,10 @@
 Changelog
 ---------
 
+Unreleased
+^^^^^^^^^^
+- WOM-511: Add attribute data type caching.
+
 0.1.2
 ^^^^^
 - WOM-424: Added missing 'packaging' dependency.
