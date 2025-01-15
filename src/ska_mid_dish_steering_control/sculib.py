@@ -1115,7 +1115,9 @@ class SteeringControlUnit:
     # -----------------------------
     # Node dictionaries and caching
     # -----------------------------
-    def _retreive_cached_data(self, file_path):
+    def _retreive_cached_data(
+        self, file_path: Path
+    ) -> dict[str, CachedNodesDict] | None:
         """
         Retrieve cached nodes from json.
 
@@ -1123,7 +1125,9 @@ class SteeringControlUnit:
         the new format (node details as dict). If the cache file is still the old
         format, the data is updated to the new format before being returned.
         """
-        data = utils.load_json_file(file_path)
+        data: dict[str, CachedNodesDict] | None = utils.load_json_file(
+            file_path
+        )  # type: ignore
         # Check cache file format
         try:
             # Pop an item and return to check load success.
@@ -1180,7 +1184,7 @@ class SteeringControlUnit:
             except TypeError as exc:
                 logger.debug("TypeError with dict value %s: %s", tup, exc)
         cached_data: dict[str, CachedNodesDict] = (
-            self._retreive_cached_data(file_path) or {}  # type: ignore
+            self._retreive_cached_data(file_path) or {}
         )
         cached_data[self._server_str_id] = {
             "node_ids": node_ids,  # type: ignore
