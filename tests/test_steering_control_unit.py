@@ -211,7 +211,7 @@ class TestGeneral:
         assert data_type == ["Pointing.Status.CurrentPointing"]
         data_type = scu.get_attribute_data_type("NonExistentAttribute")
         assert isinstance(data_type, list)
-        assert data_type == []
+        assert data_type == ["Unknown"]
 
     def test_axis_commands(self: "TestGeneral", scu: SteeringControlUnit) -> None:
         """Test the axis commands methods."""
