@@ -1,9 +1,10 @@
 Changelog
 ---------
 
-Unreleased
-^^^^^^^^^^
-- WOM-511: Add attribute data type caching.
+0.2.0
+^^^^^
+- WOM-511: Added attribute data type caching.
+- KAR-1302: Added an option to reuse a ``SubscriptionHandler`` instance, rather than creating a new one for every subscription.
 
 0.1.2
 ^^^^^
