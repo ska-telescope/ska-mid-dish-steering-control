@@ -1502,6 +1502,42 @@ class SteeringControlUnit:
         """
         return self.__get_node_list(self.commands)
 
+    def get_command_arguments(self, command: str) -> list[tuple[str, str]] | None:
+        """
+        Get a list of the input arguments of a given command.
+
+        :param command: Name of the command to retrieve.
+        :return: List of tuples with each argument's name and its type, or None if the
+            command does not exist.
+        """
+        if command not in self.nodes:
+            logger.warning("Given command '%s' not found in nodes dict!", command)
+            return None
+        command_node = self.nodes[command][0]
+        children = asyncio.run_coroutine_threadsafe(
+            command_node.get_children(), self.event_loop
+        ).result()
+        # Retrieve a list of input argument objects for the command
+        input_args_objects = []
+        for child in children:
+            browse_name = asyncio.run_coroutine_threadsafe(
+                child.read_browse_name(), self.event_loop
+            ).result()
+            if browse_name.Name == "InputArguments":
+                input_args_objects = asyncio.run_coroutine_threadsafe(
+                    child.read_value(), self.event_loop
+                ).result()
+                break
+        # Build a new list of tuples with each input arg name and its data type name
+        input_args = []
+        for arg in input_args_objects:
+            data_type_node = self._client.get_node(arg.DataType)
+            data_type = asyncio.run_coroutine_threadsafe(
+                data_type_node.read_browse_name(), self.event_loop
+            ).result()
+            input_args.append((arg.Name, data_type.Name))
+        return input_args
+
     def get_attribute_list(self) -> list[str]:
         """
         Get the list of attributes.

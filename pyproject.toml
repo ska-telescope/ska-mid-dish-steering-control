@@ -1,10 +1,18 @@
 [tool.poetry]
+include = ["MANIFEST.skao.int"]
 name = "ska-mid-dish-steering-control"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python module that interfaces with the OPCUA protocol of the dish structure controller"
-authors = ["Your Name <you@example.com>"]
-license = "Copyright 2024 SKA Observatory"
+authors = [
+    "Oliver Skivington <oliver.skivington@criticalsoftware.com>",
+    "Thomas Juerges <thomas.juerges@skao.int>",
+    "Ulrik Pedersen <ukp@observatorysciences.co.uk>",
+    "Jarrett Engelbrecht <jarrett@vivosa.co.za>",
+]
+license = "BSD-3-Clause"
 readme = "README.md"
+repository = "https://gitlab.com/ska-telescope/ska-mid-dish-steering-control"
+documentation = "https://developer.skao.int/projects/ska-mid-dish-steering-control"
 
 [[tool.poetry.source]]
 name = "ska-nexus"
@@ -63,5 +71,5 @@ line-length = 88
 addopts = "-v --tb=native"
 
 [build-system]
-requires = ["poetry-core"]
+requires = ["poetry-core>=1.8.0"]
 build-backend = "poetry.core.masonry.api"
