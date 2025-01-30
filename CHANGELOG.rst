@@ -1,6 +1,10 @@
 Changelog
 ---------
 
+0.3.0
+^^^^^
+- WOM-593: Added ``get_command_arguments()`` method that, for a given command, returns a list of tuples with each input argument's name and its OPCUA data type.
+
 0.2.0
 ^^^^^
 - WOM-511: Added attribute data type caching.
