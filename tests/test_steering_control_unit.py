@@ -196,6 +196,17 @@ class TestGeneral:
         assert isinstance(command_list, list)
         assert all(isinstance(command, str) for command in command_list)
 
+    def test_get_command_arguments(
+        self: "TestGeneral", scu: SteeringControlUnit
+    ) -> None:
+        """Test get_command_arguments method."""
+        command_args = scu.get_command_arguments("nonexistant")
+        assert command_args is None
+        command_args = scu.get_command_arguments(Command.STOW.value)
+        assert isinstance(command_args, list)
+        assert command_args[0] == ("SessionID", "UInt16")
+        assert command_args[1] == ("StowAction", "Boolean")
+
     def test_get_attribute_list(self: "TestGeneral", scu: SteeringControlUnit) -> None:
         """Test get_attribute_list method."""
         attribute_list = scu.get_attribute_list()
