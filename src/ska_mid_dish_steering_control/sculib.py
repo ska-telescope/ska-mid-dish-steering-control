@@ -1477,32 +1477,48 @@ class SteeringControlUnit:
             command does not exist.
         """
         if command not in self.nodes:
-            logger.warning("Given command '%s' not found in nodes dict!", command)
+            logger.warning("Given command '%s' not found in nodes dict.", command)
             return None
         command_node = self.nodes[command][0]
-        children = asyncio.run_coroutine_threadsafe(
-            command_node.get_children(), self.event_loop
+        # Browse the command node to find the InputArguments node
+        browse_results = asyncio.run_coroutine_threadsafe(
+            self._client.browse_nodes([command_node]), self.event_loop
         ).result()
-        # Retrieve a list of input argument objects for the command
-        input_args_objects = []
-        for child in children:
-            browse_name = asyncio.run_coroutine_threadsafe(
-                child.read_browse_name(), self.event_loop
-            ).result()
-            if browse_name.Name == "InputArguments":
-                input_args_objects = asyncio.run_coroutine_threadsafe(
-                    child.read_value(), self.event_loop
-                ).result()
-                break
-        # Build a new list of tuples with each input arg name and its data type name
-        input_args = []
-        for arg in input_args_objects:
-            data_type_node = self._client.get_node(arg.DataType)
-            data_type = asyncio.run_coroutine_threadsafe(
-                data_type_node.read_browse_name(), self.event_loop
-            ).result()
-            input_args.append((arg.Name, data_type.Name))
-        return input_args
+        for _, result in browse_results:
+            for ref in result.References:
+                if ref.BrowseName.Name == "InputArguments":
+                    input_args_node = self._client.get_node(ref.NodeId)
+                    input_args_objects = asyncio.run_coroutine_threadsafe(
+                        input_args_node.read_value(), self.event_loop
+                    ).result()
+                    if not input_args_objects:
+                        logger.warning(
+                            "No input arguments found for command '%s'.", command
+                        )
+                        return []
+                    # Prepare nodes for data type browse names
+                    data_type_nodes = [
+                        self._client.get_node(arg.DataType)
+                        for arg in input_args_objects
+                    ]
+                    # Read browse names of all data type nodes in one call
+                    data_type_browse_names = asyncio.run_coroutine_threadsafe(
+                        self._client.read_attributes(
+                            data_type_nodes, ua.AttributeIds.BrowseName
+                        ),
+                        self.event_loop,
+                    ).result()
+                    # Build a list of tuples with each input arg and its data type name
+                    return [
+                        (arg.Name, browse_name.Value.Value.Name)
+                        if browse_name.Value
+                        else (arg.Name, "Unknown")
+                        for arg, browse_name in zip(
+                            input_args_objects, data_type_browse_names
+                        )
+                    ]
+        logger.warning("InputArguments node not found for command '%s'.", command)
+        return None
 
     def get_attribute_list(self) -> list[str]:
         """
