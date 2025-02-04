@@ -178,8 +178,10 @@ class TestGeneral:
         session_id = scu._session_id
         scu.release_authority()
         expected_log = [
-            "Calling command node '2:TakeAuth' with args list: [3]",
-            f"Calling command node '2:ReleaseAuth' with args list: [{session_id}, 3]",
+            "Calling command node 'CommandArbiter.Commands.TakeAuth' "
+            "with args list: [3]",
+            "Calling command node 'CommandArbiter.Commands.ReleaseAuth' "
+            f"with args list: [{session_id}, 3]",
         ]
         for message in expected_log:
             assert message in caplog.messages
