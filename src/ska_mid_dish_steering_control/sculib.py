@@ -1432,14 +1432,22 @@ class SteeringControlUnit:
                 commands.update(child_commands)
         elif node_class == ua.NodeClass.Variable:  # Attribute
             # Check if RO or RW and call the respective creator functions.
-            # if node.figure_out_if_RW_or_RO is RW:
+            # access_level_set = await node.get_access_level()
+            # if ua.AccessLevel.CurrentWrite in access_level_set:
             attributes[node_name] = create_rw_attribute(
                 node, self.event_loop, node_name
             )
+            # elif ua.AccessLevel.CurrentRead in access_level_set:
+            #     attributes[node_name] = create_ro_attribute(
+            #         node, self.event_loop, node_name
+            #     )
             # else:
-            # attributes[node_name] = create_ro_attribute(
-            #     node, self.event_loop, node_name
-            # )
+            #     logger.warning(
+            #         "AccessLevel for variable node '%s' is not expected 'CurrentRead'"
+            #         " or 'CurrentWrite', but '%s'",
+            #         node_name,
+            #         access_level_set,
+            #     )
         elif node_class == ua.NodeClass.Method:  # Command
             commands[node_name] = await self._create_command_function(
                 node,
