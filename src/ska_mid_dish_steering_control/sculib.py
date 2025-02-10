@@ -970,7 +970,7 @@ class SteeringControlUnit:
                 enum_dict[display_name] = i
         return IntEnum(name, enum_dict)
 
-    def _create_command_function(
+    async def _create_command_function(
         self,
         node: Node,
         event_loop: asyncio.AbstractEventLoop,
@@ -988,9 +988,7 @@ class SteeringControlUnit:
         :return: A function that can be used to execute a method on the Node.
         """
         try:
-            node_parent = asyncio.run_coroutine_threadsafe(
-                node.get_parent(), event_loop
-            ).result()
+            node_parent = await node.get_parent()
             node_call_method = node_parent.call_method
         except AttributeError as e:
             logger.error(
@@ -1012,10 +1010,7 @@ class SteeringControlUnit:
 
             return empty_func
 
-        read_name = asyncio.run_coroutine_threadsafe(
-            node.read_display_name(), event_loop
-        )
-        node_id = f"{node.nodeid.NamespaceIndex}:{read_name.result().Text}"
+        node_id = node.nodeid
 
         # pylint: disable=protected-access
         def fn(*args: Any) -> CmdReturn:
@@ -1037,7 +1032,7 @@ class SteeringControlUnit:
                 cmd_args = [self._session_id, *args] if need_authority else [*args]
                 logger.debug(
                     "Calling command node '%s' with args list: %s",
-                    node_id,
+                    node_name,
                     cmd_args,
                 )
                 result: None | int | list[Any] = asyncio.run_coroutine_threadsafe(
@@ -1148,7 +1143,7 @@ class SteeringControlUnit:
                         "opcua_node_str": node_info[0],
                         "node_class": node_class,
                     }
-                    if node_class == 2:
+                    if node_class == ua.NodeClass.Variable:
                         details_dict["attribute_type"] = ["Unknown"]
 
                     data[server_id]["node_ids"][scu_node_str] = details_dict
@@ -1176,7 +1171,7 @@ class SteeringControlUnit:
                         "opcua_node_str": node.nodeid.to_string(),
                         "node_class": node_class,
                     }
-                    if node_class == 2:
+                    if node_class == ua.NodeClass.Variable:
                         node_ids[key][
                             "attribute_type"
                         ] = self._get_cached_attribute_data_type(key)
@@ -1321,20 +1316,23 @@ class SteeringControlUnit:
             node_class = node_details["node_class"]
             node: Node = self._client.get_node(node_id)
             nodes[node_name] = (node, node_class)
-            if node_class == 2:
+            if node_class == ua.NodeClass.Variable:
                 # An attribute. Add it to the attributes dict and retrieve the type.
                 attributes[node_name] = create_rw_attribute(
                     node, self.event_loop, node_name
                 )
                 self._attribute_types_cache[node_name] = node_details["attribute_type"]
-            elif node_class == 4:
+            elif node_class == ua.NodeClass.Method:
                 # A command. Add it to the commands dict.
-                commands[node_name] = self._create_command_function(
-                    node,
+                commands[node_name] = asyncio.run_coroutine_threadsafe(
+                    self._create_command_function(
+                        node,
+                        self.event_loop,
+                        node_name,
+                        node_name != Command.TAKE_AUTH.value,
+                    ),
                     self.event_loop,
-                    node_name,
-                    node_name != Command.TAKE_AUTH.value,
-                )
+                ).result()
         return (
             nodes,
             attributes,
@@ -1361,15 +1359,13 @@ class SteeringControlUnit:
             "Generating dicts of '%s' node's tree from server. It may take a while...",
             top_level_node_name,
         )
-        nodes, attributes, commands = self._get_sub_nodes(top_level_node)
-        nodes.update({top_level_node_name: (top_level_node, 1)})
-        return (
-            nodes,
-            attributes,
-            commands,
-        )
+        nodes, attributes, commands = asyncio.run_coroutine_threadsafe(
+            self._get_sub_nodes(top_level_node), self.event_loop
+        ).result()
+        nodes.update({top_level_node_name: (top_level_node, ua.NodeClass.Object)})
+        return nodes, attributes, commands
 
-    def generate_full_node_name(
+    async def _generate_full_node_name(
         self,
         node: Node,
         parent_names: list[str] | None,
@@ -1384,24 +1380,14 @@ class SteeringControlUnit:
         :param node_name_separator: The separator used to join the node and parent
             names. Default is '.'.
         :return: A tuple containing the full node name and a list of ancestor names.
-        :raises: No specific exceptions raised.
         """
         try:
             name: str = node.nodeid.Identifier.split(node_name_separator)[-1]
         except AttributeError:
-            name = (
-                asyncio.run_coroutine_threadsafe(
-                    node.read_browse_name(), self.event_loop
-                )
-                .result()
-                .Name
-            )
+            browse_name = await node.read_browse_name()
+            name = browse_name.Name
 
-        ancestors = []
-        if parent_names is not None:
-            for p_name in parent_names:
-                ancestors.append(p_name)
-
+        ancestors = parent_names.copy() if parent_names else []
         if name != "PLC_PRG":
             ancestors.append(name)
 
@@ -1409,73 +1395,61 @@ class SteeringControlUnit:
             node_name = node_name_separator.join(ancestors)
         except Exception:
             logger.exception("Invalid node for: %s", ancestors)
-            return ("", [""])
+            return "", [""]
+        return node_name, ancestors
 
-        return (node_name, ancestors)
-
-    # pylint: disable=unused-argument
-    def _get_sub_nodes(
+    async def _get_sub_nodes(
         self,
         node: Node,
-        node_name_separator: str = ".",
         parent_names: list[str] | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
         Retrieve sub-nodes, attributes, and commands of a given node.
 
         :param node: The node to retrieve sub-nodes from.
-        :param node_name_separator: Separator for node names (default is '.').
         :param parent_names: List of parent node names (default is None).
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
         """
         nodes: NodeDict = {}
         attributes: AttrDict = {}
         commands: CmdDict = {}
-        node_name, ancestors = self.generate_full_node_name(node, parent_names)
+        node_name, ancestors = await self._generate_full_node_name(node, parent_names)
         # Do not add the InputArgument and OutputArgument nodes.
-        if (
-            node_name.endswith(".InputArguments", node_name.rfind(".")) is True
-            or node_name.endswith(".OutputArguments", node_name.rfind(".")) is True
+        if node_name.endswith(".InputArguments") or node_name.endswith(
+            ".OutputArguments"
         ):
             return nodes, attributes, commands
 
-        node_class = (
-            asyncio.run_coroutine_threadsafe(node.read_node_class(), self.event_loop)
-            .result()
-            .value
-        )
+        node_class = await node.read_node_class()
         nodes[node_name] = (node, node_class)
-        # node_class = 1: Normal node with children
-        # node_class = 2: Attribute
-        # node_class = 4: Method
-        if node_class == 1:
-            children = asyncio.run_coroutine_threadsafe(
-                node.get_children(), self.event_loop
-            ).result()
-            child_nodes: NodeDict = {}
-            for child in children:
-                child_nodes, child_attributes, child_commands = self._get_sub_nodes(
-                    child, parent_names=ancestors
-                )
+        if node_class == ua.NodeClass.Object:  # Normal node with children
+            children = await node.get_children()
+            tasks = [self._get_sub_nodes(child, ancestors) for child in children]
+            results = await asyncio.gather(*tasks)
+            for child_nodes, child_attributes, child_commands in results:
                 nodes.update(child_nodes)
                 attributes.update(child_attributes)
                 commands.update(child_commands)
-        elif node_class == 2:
-            # An attribute. Add it to the attributes dict.
-            # attributes[node_name] = node.get_value
-            #
+        elif node_class == ua.NodeClass.Variable:  # Attribute
             # Check if RO or RW and call the respective creator functions.
-            # if node.figure_out_if_RW_or_RO is RW:
+            # access_level_set = await node.get_access_level()
+            # if ua.AccessLevel.CurrentWrite in access_level_set:
             attributes[node_name] = create_rw_attribute(
                 node, self.event_loop, node_name
             )
+            # elif ua.AccessLevel.CurrentRead in access_level_set:
+            #     attributes[node_name] = create_ro_attribute(
+            #         node, self.event_loop, node_name
+            #     )
             # else:
-            # attributes[node_name] = create_ro_attribute(
-            #     node, self.event_loop, node_name
-            # )
-        elif node_class == 4:
-            # A command. Add it to the commands dict.
-            commands[node_name] = self._create_command_function(
+            #     logger.warning(
+            #         "AccessLevel for variable node '%s' is not expected 'CurrentRead'"
+            #         " or 'CurrentWrite', but '%s'",
+            #         node_name,
+            #         access_level_set,
+            #     )
+        elif node_class == ua.NodeClass.Method:  # Command
+            commands[node_name] = await self._create_command_function(
                 node,
                 self.event_loop,
                 node_name,
@@ -1511,32 +1485,48 @@ class SteeringControlUnit:
             command does not exist.
         """
         if command not in self.nodes:
-            logger.warning("Given command '%s' not found in nodes dict!", command)
+            logger.warning("Given command '%s' not found in nodes dict.", command)
             return None
         command_node = self.nodes[command][0]
-        children = asyncio.run_coroutine_threadsafe(
-            command_node.get_children(), self.event_loop
+        # Browse the command node to find the InputArguments node
+        browse_results = asyncio.run_coroutine_threadsafe(
+            self._client.browse_nodes([command_node]), self.event_loop
         ).result()
-        # Retrieve a list of input argument objects for the command
-        input_args_objects = []
-        for child in children:
-            browse_name = asyncio.run_coroutine_threadsafe(
-                child.read_browse_name(), self.event_loop
-            ).result()
-            if browse_name.Name == "InputArguments":
-                input_args_objects = asyncio.run_coroutine_threadsafe(
-                    child.read_value(), self.event_loop
-                ).result()
-                break
-        # Build a new list of tuples with each input arg name and its data type name
-        input_args = []
-        for arg in input_args_objects:
-            data_type_node = self._client.get_node(arg.DataType)
-            data_type = asyncio.run_coroutine_threadsafe(
-                data_type_node.read_browse_name(), self.event_loop
-            ).result()
-            input_args.append((arg.Name, data_type.Name))
-        return input_args
+        for _, result in browse_results:
+            for ref in result.References:
+                if ref.BrowseName.Name == "InputArguments":
+                    input_args_node = self._client.get_node(ref.NodeId)
+                    input_args_objects = asyncio.run_coroutine_threadsafe(
+                        input_args_node.read_value(), self.event_loop
+                    ).result()
+                    if not input_args_objects:
+                        logger.warning(
+                            "No input arguments found for command '%s'.", command
+                        )
+                        return []
+                    # Prepare nodes for data type browse names
+                    data_type_nodes = [
+                        self._client.get_node(arg.DataType)
+                        for arg in input_args_objects
+                    ]
+                    # Read browse names of all data type nodes in one call
+                    data_type_browse_names = asyncio.run_coroutine_threadsafe(
+                        self._client.read_attributes(
+                            data_type_nodes, ua.AttributeIds.BrowseName
+                        ),
+                        self.event_loop,
+                    ).result()
+                    # Build a list of tuples with each input arg and its data type name
+                    return [
+                        (arg.Name, browse_name.Value.Value.Name)
+                        if browse_name.Value
+                        else (arg.Name, "Unknown")
+                        for arg, browse_name in zip(
+                            input_args_objects, data_type_browse_names
+                        )
+                    ]
+        logger.warning("InputArguments node not found for command '%s'.", command)
+        return None
 
     def get_attribute_list(self) -> list[str]:
         """
