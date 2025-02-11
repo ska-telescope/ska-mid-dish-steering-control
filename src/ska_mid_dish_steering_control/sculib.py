@@ -353,7 +353,7 @@ class CachedNodesDict(TypedDict):
 
 
 # Type aliases
-NodeDict = dict[str, tuple[Node, int]]
+NodeDict = dict[str, tuple[Node, ua.NodeClass]]
 AttrDict = dict[str, ROAttribute | RWAttribute]
 CmdDict = dict[str, Callable[..., CmdReturn]]
 
@@ -489,12 +489,25 @@ class SteeringControlUnit:
                 )
         self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
-        # Add CurrentTime node to dicts (not in PLC_PRG tree)
+        # Add ServerStatus.CurrentTime node to dicts (not in PLC_PRG tree)
         current_time_node = self._client.get_node("ns=0;i=2258")
-        self._nodes["ServerStatus.CurrentTime"] = (current_time_node, 2)
+        self._nodes["ServerStatus.CurrentTime"] = (
+            current_time_node,
+            ua.NodeClass.Variable,
+        )
         self._nodes_reversed[current_time_node] = "ServerStatus.CurrentTime"
         self._attributes["ServerStatus.CurrentTime"] = create_ro_attribute(
             current_time_node, self.event_loop, "ServerStatus.CurrentTime"
+        )
+        # Add System.DisplayedDiagnosis node to dicts (not in PLC_PRG tree)
+        diagnosis_node = self._client.get_node("ns=18;s=System.DisplayedDiagnosis")
+        self._nodes["System.DisplayedDiagnosis"] = (
+            diagnosis_node,
+            ua.NodeClass.Variable,
+        )
+        self._nodes_reversed[diagnosis_node] = "System.DisplayedDiagnosis"
+        self._attributes["System.DisplayedDiagnosis"] = create_ro_attribute(
+            diagnosis_node, self.event_loop, "System.DisplayedDiagnosis"
         )
         logger.info("Successfully connected to server and initialised SCU client")
 
