@@ -5,6 +5,10 @@ Changelog
 Unreleased
 ==========
 
+Added
+-----
+- WOM-626: Added 'System.DisplayedDiagnosis' to ``nodes`` and ``attributes`` dictionaries.
+
 Changed
 -------
 - WOM-359: Optimised OPCUA server tree scanning method ``generate_node_dicts_from_server()``, as well as ``get_command_arguments()``.
