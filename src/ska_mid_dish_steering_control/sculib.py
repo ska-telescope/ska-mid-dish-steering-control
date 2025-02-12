@@ -140,6 +140,10 @@ SPM_SCHEMA_PATH: Final = Path(
 )
 
 PLC_PRG: Final = "PLC_PRG"
+CURRENT_TIME: Final = "ServerStatus.CurrentTime"
+CURRENT_TIME_ID: Final = "ns=0;i=2258"
+DISPLAYED_DIAGNOSIS: Final = "System.DisplayedDiagnosis"
+DISPLAYED_DIAGNOSIS_ID: Final = "ns=18;s=System.DisplayedDiagnosis"
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -490,24 +494,24 @@ class SteeringControlUnit:
         self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
         # Add ServerStatus.CurrentTime node to dicts (not in PLC_PRG tree)
-        current_time_node = self._client.get_node("ns=0;i=2258")
-        self._nodes["ServerStatus.CurrentTime"] = (
+        current_time_node = self._client.get_node(CURRENT_TIME_ID)
+        self._nodes[CURRENT_TIME] = (
             current_time_node,
             ua.NodeClass.Variable,
         )
-        self._nodes_reversed[current_time_node] = "ServerStatus.CurrentTime"
-        self._attributes["ServerStatus.CurrentTime"] = create_ro_attribute(
-            current_time_node, self.event_loop, "ServerStatus.CurrentTime"
+        self._nodes_reversed[current_time_node] = CURRENT_TIME
+        self._attributes[CURRENT_TIME] = create_ro_attribute(
+            current_time_node, self.event_loop, CURRENT_TIME
         )
         # Add System.DisplayedDiagnosis node to dicts (not in PLC_PRG tree)
-        diagnosis_node = self._client.get_node("ns=18;s=System.DisplayedDiagnosis")
-        self._nodes["System.DisplayedDiagnosis"] = (
+        diagnosis_node = self._client.get_node(DISPLAYED_DIAGNOSIS_ID)
+        self._nodes[DISPLAYED_DIAGNOSIS] = (
             diagnosis_node,
             ua.NodeClass.Variable,
         )
-        self._nodes_reversed[diagnosis_node] = "System.DisplayedDiagnosis"
-        self._attributes["System.DisplayedDiagnosis"] = create_ro_attribute(
-            diagnosis_node, self.event_loop, "System.DisplayedDiagnosis"
+        self._nodes_reversed[diagnosis_node] = DISPLAYED_DIAGNOSIS
+        self._attributes[DISPLAYED_DIAGNOSIS] = create_ro_attribute(
+            diagnosis_node, self.event_loop, DISPLAYED_DIAGNOSIS
         )
         logger.info("Successfully connected to server and initialised SCU client")
 
