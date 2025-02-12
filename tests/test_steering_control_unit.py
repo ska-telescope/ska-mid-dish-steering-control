@@ -32,7 +32,7 @@ def scu_fixture(request: pytest.FixtureRequest) -> SteeringControlUnit:  # type:
     else:
         scu = request.getfixturevalue("scu_cetc_simulator")
     yield scu
-    sleep(0.5)
+    sleep(1)
 
 
 # pylint: disable=protected-access,unused-argument
@@ -202,9 +202,9 @@ class TestGeneral:
         self: "TestGeneral", scu: SteeringControlUnit
     ) -> None:
         """Test get_command_arguments method."""
-        command_args = scu.get_command_arguments("nonexistant")
+        command_args = scu.get_command_arguments(scu._client.get_node("i=123456789"))
         assert command_args is None
-        command_args = scu.get_command_arguments(Command.STOW.value)
+        command_args = scu.get_command_arguments(scu.nodes[Command.STOW.value][0])
         assert isinstance(command_args, list)
         assert command_args[0] == ("SessionID", "UInt16")
         assert command_args[1] == ("StowAction", "Boolean")

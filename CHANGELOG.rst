@@ -2,8 +2,8 @@
 Changelog
 =========
 
-Unreleased
-==========
+0.4.0
+=====
 
 Added
 -----
@@ -12,6 +12,7 @@ Added
 Changed
 -------
 - WOM-359: Optimised OPCUA server tree scanning method ``generate_node_dicts_from_server()``, as well as ``get_command_arguments()``.
+- WOM-625: Refactored command function creation to work for any server methods, not just 'PLC_PRG' commands. Also changed ``get_command_arguments()`` to take ``Node`` object as argument, to allow DiSQ to get inputs for any server method.
 
 0.3.0
 =====
