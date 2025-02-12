@@ -975,7 +975,6 @@ class SteeringControlUnit:
         node: Node,
         event_loop: asyncio.AbstractEventLoop,
         node_name: str,
-        need_authority: bool = False,
     ) -> Callable | None:
         """
         Create a command function to execute a method on a specified Node.
@@ -983,8 +982,6 @@ class SteeringControlUnit:
         :param node: The Node on which the method will be executed.
         :param event_loop: The asyncio event loop to run the coroutine on.
         :param node_name: The full name of the Node.
-        :param need_authority: If the command needs user authority to be executed.
-            Defaults to False.
         :return: A function that can be used to execute a method on the Node,
             or None if a call_method was not found.
         """
@@ -1006,6 +1003,17 @@ class SteeringControlUnit:
 
         node_id = node.nodeid
 
+        # Determine if the node method is an application command that requires authority
+        split_name = node_name.split(".")
+        if "Commands" in split_name:
+            short_name = f"{split_name[-3]}.{split_name[-2]}.{split_name[-1]}"
+            requires_authority = (
+                short_name in [c.value for c in Command]
+                and short_name != Command.TAKE_AUTH.value
+            )
+        else:
+            requires_authority = False
+
         # pylint: disable=protected-access
         def fn(*args: Any) -> CmdReturn:
             """
@@ -1023,7 +1031,7 @@ class SteeringControlUnit:
             result_code = None
             result_output = None
             try:
-                cmd_args = [self._session_id, *args] if need_authority else [*args]
+                cmd_args = [self._session_id, *args] if requires_authority else [*args]
                 logger.debug(
                     "Calling command node '%s' with args list: %s",
                     node_name,
@@ -1318,21 +1326,11 @@ class SteeringControlUnit:
                 self._attribute_types_cache[node_name] = node_details["attribute_type"]
             elif node_class == ua.NodeClass.Method:
                 # A command. Add it to the commands dict.
-                split_name = node_name.split(".")
-                if "Commands" in split_name:
-                    short_name = f"{split_name[-3]}.{split_name[-2]}.{split_name[-1]}"
-                    need_authority = (
-                        short_name in [c.value for c in Command]
-                        and short_name != Command.TAKE_AUTH.value
-                    )
-                else:
-                    need_authority = False
                 command_method = asyncio.run_coroutine_threadsafe(
                     self._create_command_function(
                         node,
                         self.event_loop,
                         node_name,
-                        need_authority,
                     ),
                     self.event_loop,
                 ).result()
@@ -1463,20 +1461,10 @@ class SteeringControlUnit:
             #         access_level_set,
             #     )
         elif node_class == ua.NodeClass.Method:  # Command
-            split_name = node_name.split(".")
-            if "Commands" in split_name:
-                short_name = f"{split_name[-3]}.{split_name[-2]}.{split_name[-1]}"
-                need_authority = (
-                    short_name in [c.value for c in Command]
-                    and short_name != Command.TAKE_AUTH.value
-                )
-            else:
-                need_authority = False
             command_method = await self._create_command_function(
                 node,
                 self.event_loop,
                 node_name,
-                need_authority,
             )
             if command_method:
                 commands[node_name] = command_method
