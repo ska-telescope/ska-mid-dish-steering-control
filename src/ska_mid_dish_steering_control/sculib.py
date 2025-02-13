@@ -35,7 +35,7 @@ manager without calling the teardown method explicitly:
     with SteeringControlUnit(host="localhost") as scu:
         scu.take_authority("LMC")
 
-All nodes from and including the PLC_PRG node are stored in the nodes dictionary:
+All nodes from and including the Server node are stored in the nodes dictionary:
 ``scu.nodes``. The keys are the full node names, the values are the Node objects.
 The full names of all nodes can be retrieved with:
 
@@ -48,7 +48,7 @@ Note: When accessing nodes directly, it is mandatory to await any calls:
 
 .. code-block:: python
 
-    node = scu.nodes["PLC_PRG"]
+    node = scu.nodes["Logic.Application.PLC_PRG"]
     node_name = (await node.read_display_name()).Text
 
 The command methods that are below the PLC_PRG node's hierarchy can be accessed through
@@ -134,16 +134,17 @@ from .track_table import TrackTable
 
 logger = logging.getLogger("ska-mid-ds-scu")
 
-COMPATIBLE_CETC_SIM_VER: Final = Version("3.2.3")
+COMPATIBLE_CETC_SIM_VER: Final = Version("4.6")
 SPM_SCHEMA_PATH: Final = Path(
     resources.files(__package__) / "schemas/ska-mid-dish-gpm.json"  # type: ignore
 )
 
-PLC_PRG: Final = "PLC_PRG"
-CURRENT_TIME: Final = "ServerStatus.CurrentTime"
-CURRENT_TIME_ID: Final = "ns=0;i=2258"
-DISPLAYED_DIAGNOSIS: Final = "System.DisplayedDiagnosis"
-DISPLAYED_DIAGNOSIS_ID: Final = "ns=18;s=System.DisplayedDiagnosis"
+TOP_NODE: Final = "Server"
+TOP_NODE_ID: Final = "i=2253"
+SKIP_NODE_ID: Final = "ns=22;s=Trace"
+SERVER_STATUS_ID: Final = "i=2256"
+PLC_PRG: Final = "Logic.Application.PLC_PRG"
+PLC_PRG_ID: Final = "ns=2;s=Application.PLC_PRG"
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -378,7 +379,7 @@ class SteeringControlUnit:
     :param password: The password for authentication. Default is None.
     :param timeout: The timeout value for connection. Default is 10.0.
     :param eventloop: The asyncio event loop to use. Default is None.
-    :param gui_app: Whether the instance is for a GUI application. Default is False.
+    :param scan_parameter_node: Whether to scan the 'Parameter' tree. Default is False.
     :param use_nodes_cache: Whether to use any existing caches of node IDs.
         Default is False.
     :param nodes_cache_dir: Directory where to save the cache and load it from.
@@ -401,7 +402,7 @@ class SteeringControlUnit:
         password: str | None = None,
         timeout: float = 10.0,
         eventloop: asyncio.AbstractEventLoop | None = None,
-        gui_app: bool = False,
+        scan_parameter_node: bool = False,
         use_nodes_cache: bool = False,
         nodes_cache_dir: Path = USER_CACHE_DIR,
         app_name: str = f"SKA-Mid-DS-SCU v{__version__}",
@@ -421,7 +422,7 @@ class SteeringControlUnit:
         else:
             self.event_loop = eventloop
         logger.info("Event loop: %s", self.event_loop)
-        self._gui_app = gui_app
+        self._scan_parameter_node = scan_parameter_node
         self._use_nodes_cache = use_nodes_cache
         self._nodes_cache_dir = nodes_cache_dir
         self._app_name = app_name
@@ -434,15 +435,13 @@ class SteeringControlUnit:
         self._session_id = ua.UInt16(0)
         self._server_url: str = ""
         self._server_str_id: str = ""
-        self._plc_prg: Node | None = None
         self._ns_idx: int = 2  # Default is first physical controller
         self._nodes: NodeDict = {}
         self._nodes_reversed: dict[Node, str] = {}
         self._attributes: AttrDict = {}
         self._commands: CmdDict = {}
-        self._plc_prg_nodes_timestamp: str = ""
+        self._nodes_timestamp: str = ""
         self._parameter_ns_idx: int | None = None
-        self._parameter: Node | None = None
         self._parameter_nodes: NodeDict = {}
         self._parameter_attributes: AttrDict = {}
         self._track_table_queue: queue.Queue | None = None
@@ -493,26 +492,6 @@ class SteeringControlUnit:
                 )
         self._populate_node_dicts()
         self._validate_enum_types()  # Ensures enum types are defined
-        # Add ServerStatus.CurrentTime node to dicts (not in PLC_PRG tree)
-        current_time_node = self._client.get_node(CURRENT_TIME_ID)
-        self._nodes[CURRENT_TIME] = (
-            current_time_node,
-            ua.NodeClass.Variable,
-        )
-        self._nodes_reversed[current_time_node] = CURRENT_TIME
-        self._attributes[CURRENT_TIME] = create_ro_attribute(
-            current_time_node, self.event_loop, CURRENT_TIME
-        )
-        # Add System.DisplayedDiagnosis node to dicts (not in PLC_PRG tree)
-        diagnosis_node = self._client.get_node(DISPLAYED_DIAGNOSIS_ID)
-        self._nodes[DISPLAYED_DIAGNOSIS] = (
-            diagnosis_node,
-            ua.NodeClass.Variable,
-        )
-        self._nodes_reversed[diagnosis_node] = DISPLAYED_DIAGNOSIS
-        self._attributes[DISPLAYED_DIAGNOSIS] = create_ro_attribute(
-            diagnosis_node, self.event_loop, DISPLAYED_DIAGNOSIS
-        )
         logger.info("Successfully connected to server and initialised SCU client")
 
     def __enter__(self) -> "SteeringControlUnit":
@@ -531,7 +510,7 @@ class SteeringControlUnit:
         self.unsubscribe_all()
         self.disconnect()
         # Store any updates to attribute data types.
-        self._cache_node_ids(self._nodes_cache_dir / f"{PLC_PRG}.json", self._nodes)
+        self._cache_node_ids(self._nodes_cache_dir / f"{TOP_NODE}.json", self._nodes)
         self.cleanup_resources()
 
     def cleanup_resources(self) -> None:
@@ -676,7 +655,7 @@ class SteeringControlUnit:
                 "*** Exception caught while trying to access the namespace "
                 "'http://boschrexroth.com/OpcUa/Parameter/Objects/' for the parameter "
                 "nodes on the OPC UA server. "
-                "From now on it will be assumed that the CETC54 simulator is running."
+                "It will be assumed that the CETC54 simulator is running."
             )
             logger.warning(message)
 
@@ -776,21 +755,13 @@ class SteeringControlUnit:
 
     @property
     def nodes(self) -> NodeDict:
-        """
-        Dictionary of the 'PLC_PRG' node's entire tree of `asyncua.Node` objects.
-
-        Also contains the 'ServerStatus.CurrentTime' key with the
-        Server -> ServerStatus -> CurrentTime node.
-        """
+        """Dictionary of the 'Server' node's entire tree of `asyncua.Node` objects."""
         return self._nodes
 
     @property
     def attributes(self) -> AttrDict:
         """
-        Dictionary containing the attributes in the 'PLC_PRG' node tree.
-
-        Also contains the 'ServerStatus.CurrentTime' key with the
-        Server -> ServerStatus -> CurrentTime node as a RO attribute.
+        Dictionary containing the attributes in the 'Server' node tree.
 
         The values are callables that return the current value.
         """
@@ -799,20 +770,20 @@ class SteeringControlUnit:
     @property
     def commands(self) -> CmdDict:
         """
-        Dictionary containing command methods in the 'PLC_PRG' node tree.
+        Dictionary containing command methods in the 'Server' node tree.
 
         The values are callables which require the expected parameters.
         """
         return self._commands
 
     @property
-    def plc_prg_nodes_timestamp(self) -> str:
+    def nodes_timestamp(self) -> str:
         """
-        Generation timestamp of the 'PLC_PRG' nodes.
+        Generation timestamp of the 'Server' nodes.
 
         The timestamp is in 'yyyy-mm-dd hh:mm:ss' string format.
         """
-        return self._plc_prg_nodes_timestamp
+        return self._nodes_timestamp
 
     @property
     def parameter_nodes(self) -> NodeDict:
@@ -1212,47 +1183,44 @@ class SteeringControlUnit:
         """
         Populate dictionaries with Node objects.
 
-        This method populates dictionaries with Node objects for different categories
-        like nodes, attributes, and commands.
-
-        nodes: Contains the entire asyncua.Node-tree from and including
-        the 'PLC_PRG' node.
-
-        attributes: Contains the attributes in the asyncua.Node-tree from
-        the 'PLC_PRG' node on. The values are callables that return the
-        current value.
-
-        commands: Contains all callable methods in the asyncua.Node-tree
-        from the 'PLC_PRG' node on. The values are callables which
-        just require the expected parameters.
+        This method scans the OPC-UA server tree and populates dictionaries with
+        Node objects for different categories like nodes, attributes, and commands.
 
         This method may raise exceptions related to asyncio operations.
         """
-        # Create node dicts of the PLC_PRG node's tree
-        top_node_name = PLC_PRG
-        self._plc_prg = asyncio.run_coroutine_threadsafe(
-            self._client.nodes.objects.get_child(
-                [
-                    f"{self._ns_idx}:Logic",
-                    f"{self._ns_idx}:Application",
-                    f"{self._ns_idx}:{top_node_name}",
-                ]
-            ),
-            self.event_loop,
-        ).result()
+        # Create node dicts of the top node's tree
         (
             self._nodes,
             self._attributes,
             self._commands,
-            self._plc_prg_nodes_timestamp,
-        ) = self._check_cache_and_generate_node_dicts(self._plc_prg, top_node_name)
+            self._nodes_timestamp,
+        ) = self._check_cache_and_generate_node_dicts(
+            top_level_node=self._client.get_node(TOP_NODE_ID),
+            top_level_node_name=TOP_NODE,
+            skip_node_id=SKIP_NODE_ID,
+        )
+        # Check if the PLC_PRG node exists, and if not, scan it separately and add its
+        # nodes, attributes, and commands to the dictionaries. (needed for CETC sim)
+        if PLC_PRG not in self._nodes:
+            (
+                nodes,
+                attributes,
+                commands,
+                _,  # timestamp
+            ) = self._check_cache_and_generate_node_dicts(
+                top_level_node=self._client.get_node(PLC_PRG_ID),
+                top_level_node_name="PLC_PRG",
+            )
+            self._nodes.update(nodes)
+            self._attributes.update(attributes)
+            self._commands.update(commands)
         self._nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
 
-        # We also want the PLC's parameters for the drives and the PLC program.
+        # Check if we also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
         top_node_name = "Parameter"
-        if not self._gui_app and self._parameter_ns_idx is not None:
-            self._parameter = asyncio.run_coroutine_threadsafe(
+        if self._scan_parameter_node and self._parameter_ns_idx is not None:
+            parameter_node = asyncio.run_coroutine_threadsafe(
                 self._client.nodes.objects.get_child(
                     [f"{self._parameter_ns_idx}:{top_node_name}"]
                 ),
@@ -1263,14 +1231,13 @@ class SteeringControlUnit:
                 self._parameter_attributes,
                 _,  # Parameter tree has no commands, so it is just an empty dict
                 _,  # timestamp
-            ) = self._check_cache_and_generate_node_dicts(
-                self._parameter, top_node_name
-            )
+            ) = self._check_cache_and_generate_node_dicts(parameter_node, top_node_name)
 
     def _check_cache_and_generate_node_dicts(
         self,
         top_level_node: Node,
         top_level_node_name: str,
+        skip_node_id: str | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict, str]:
         """
         Check for an existing nodes cache to use and generate the dicts accordingly.
@@ -1281,6 +1248,8 @@ class SteeringControlUnit:
 
         :param top_level_node: The top-level node for which to generate dictionaries.
         :param top_level_node_name: Name of the top-level node.
+        :param skip_node_id: Optional ID of a sub-node to skip when generating the
+            dictionaries, defaults to None.
         :return: A tuple containing dictionaries for nodes, attributes, and commands, as
             well as a string timestamp of when the dicts were generated.
         """
@@ -1303,7 +1272,7 @@ class SteeringControlUnit:
             timestamp = cached_nodes["timestamp"]
         else:
             node_dicts = self.generate_node_dicts_from_server(
-                top_level_node, top_level_node_name
+                top_level_node, top_level_node_name, skip_node_id
             )
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._cache_node_ids(cache_file_path, node_dicts[0])
@@ -1360,7 +1329,10 @@ class SteeringControlUnit:
         )
 
     def generate_node_dicts_from_server(
-        self, top_level_node: Node, top_level_node_name: str
+        self,
+        top_level_node: Node,
+        top_level_node_name: str,
+        skip_node_id: str | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
         Generate dicts for nodes, attributes, and commands for a given top-level node.
@@ -1373,6 +1345,8 @@ class SteeringControlUnit:
 
         :param top_level_node: The top-level node for which to generate dictionaries.
         :param top_level_node_name: Name of the top-level node.
+        :param skip_node_id: Optional ID of a sub-node to skip when generating the
+            dictionaries, defaults to None.
         :return: A tuple containing dictionaries for nodes, attributes, and commands.
         """
         logger.info(
@@ -1380,7 +1354,8 @@ class SteeringControlUnit:
             top_level_node_name,
         )
         nodes, attributes, commands = asyncio.run_coroutine_threadsafe(
-            self._get_sub_nodes(top_level_node, top_level_node_name), self.event_loop
+            self._get_sub_nodes(top_level_node, top_level_node_name, skip_node_id),
+            self.event_loop,
         ).result()
         nodes.update({top_level_node_name: (top_level_node, ua.NodeClass.Object)})
         return nodes, attributes, commands
@@ -1390,6 +1365,7 @@ class SteeringControlUnit:
         node: Node,
         top_level_node_name: str,
         parent_names: list[str] | None,
+        node_class: ua.NodeClass,
         node_name_separator: str = ".",
     ) -> tuple[str, list[str]]:
         """
@@ -1409,21 +1385,32 @@ class SteeringControlUnit:
             browse_name = await node.read_browse_name()
             name = browse_name.Name
 
-        ancestors = parent_names.copy() if parent_names else []
+        if parent_names:
+            parents = parent_names.copy()
+        # Add the top node name as only parent for non-hierarchical direct children
+        elif node_class in [ua.NodeClass.Variable, ua.NodeClass.Method]:
+            parents = [TOP_NODE]
+        else:
+            parents = []
         if name != top_level_node_name:
-            ancestors.append(name)
+            parents.append(name)
 
         try:
-            node_name = node_name_separator.join(ancestors)
+            node_name = node_name_separator.join(parents)
         except Exception:
-            logger.exception("Invalid node for: %s", ancestors)
+            logger.exception("Invalid node for: %s", parents)
             return "", [""]
-        return node_name, ancestors
+
+        # Remove the full PLC_PRG prefix from the node name for backwards compatiblity
+        if f"{PLC_PRG}." in node_name:
+            node_name = node_name.removeprefix(f"{PLC_PRG}.")
+        return node_name, parents
 
     async def _get_sub_nodes(
         self,
         node: Node,
         top_level_node_name: str,
+        skip_node_id: str | None = None,
         parent_names: list[str] | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
@@ -1431,14 +1418,21 @@ class SteeringControlUnit:
 
         :param node: The node to retrieve sub-nodes from.
         :param top_level_node_name: Name of the top-level node.
+        :param skip_node_id: Optional ID of a sub-node to skip when generating the
+            dictionaries, defaults to None.
         :param parent_names: List of parent node names (default is None).
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
         """
+        if skip_node_id and skip_node_id == node.nodeid.to_string():
+            return {}, {}, {}
+
         nodes: NodeDict = {}
         attributes: AttrDict = {}
         commands: CmdDict = {}
-        node_name, ancestors = await self._generate_full_node_name(
-            node, top_level_node_name, parent_names
+
+        node_class = await node.read_node_class()
+        node_name, parents = await self._generate_full_node_name(
+            node, top_level_node_name, parent_names, node_class
         )
         # Do not add the InputArgument and OutputArgument nodes.
         if node_name.endswith(".InputArguments") or node_name.endswith(
@@ -1446,12 +1440,16 @@ class SteeringControlUnit:
         ):
             return nodes, attributes, commands
 
-        node_class = await node.read_node_class()
         nodes[node_name] = (node, node_class)
-        if node_class == ua.NodeClass.Object:  # Normal node with children
+        # Normal node with children
+        # Note: 'ServerStatus' is a standard OPC-UA variable node that has children
+        if (
+            node_class == ua.NodeClass.Object
+            or node.nodeid.to_string() == SERVER_STATUS_ID
+        ):
             children = await node.get_children()
             tasks = [
-                self._get_sub_nodes(child, top_level_node_name, ancestors)
+                self._get_sub_nodes(child, top_level_node_name, skip_node_id, parents)
                 for child in children
             ]
             results = await asyncio.gather(*tasks)

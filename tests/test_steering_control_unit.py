@@ -159,7 +159,7 @@ class TestGeneral:
         assert scu.nodes != {}
         assert scu.attributes != {}
         assert scu.commands != {}
-        assert isinstance(datetime.fromisoformat(scu.plc_prg_nodes_timestamp), datetime)
+        assert isinstance(datetime.fromisoformat(scu.nodes_timestamp), datetime)
         if with_plc:
             assert scu.parameter_nodes != {}
             assert scu.parameter_attributes != {}
