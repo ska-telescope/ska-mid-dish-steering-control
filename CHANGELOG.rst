@@ -2,6 +2,16 @@
 Changelog
 =========
 
+Unreleased
+==========
+
+Changed
+-------
+- WOM-628: 
+  - The 'Server' tree is scanned by default for the ``nodes``, ``attributes`` and ``commands`` dictionaries, which includes the 'PLC_PRG' tree, but the 'Trace' tree is skipped. 
+  - Renamed ``plc_prg_nodes_timestamp`` property to just ``nodes_timestamp``.
+  - The 'Parameter' tree is no longer scanned by default: Renamed the ``gui_app`` argument of ``SteeringControlUnit`` class (that was used by the DiSQ GUI) to ``scan_parameter_node`` and inverted its logic. It defaults to ``False`` and must be set to ``True`` to scan the 'Parameter' tree.
+
 0.4.0
 =====
 
