@@ -23,7 +23,7 @@ python-post-lint:
 
 
 ifndef CI_JOB_TOKEN
-SIM_IMAGE=simulator:4.6.0
+SIM_IMAGE=simulator:4.7.0
 SIM_PORT=4840
 CONTAINER_NAME=cetc54-simulator-for-scu-tests
 
