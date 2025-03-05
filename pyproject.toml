@@ -1,7 +1,7 @@
 [tool.poetry]
 include = ["MANIFEST.skao.int"]
 name = "ska-mid-dish-steering-control"
-version = "0.5.0"
+version = "0.5.1"
 description = "Python module that interfaces with the OPCUA protocol of the dish structure controller"
 authors = [
     "Oliver Skivington <oliver.skivington@criticalsoftware.com>",
