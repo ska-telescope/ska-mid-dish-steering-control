@@ -2,6 +2,13 @@
 Changelog
 =========
 
+Unreleased
+==========
+
+Fixed
+-----
+- WOM-696: Add specific nodes by child names instead of ID for the Karoo simulator.
+
 0.5.0
 =====
 
