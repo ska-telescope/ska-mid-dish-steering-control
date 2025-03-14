@@ -18,8 +18,8 @@ from ska_mid_dish_steering_control import (
     sculib,
 )
 
-CETC_SIM_VERSION = "4.6"
-PLC_VERSION = "0.0.4"
+CETC_SIM_VERSION = "4.7"
+PLC_VERSION = "0.0.6"
 
 
 @pytest.fixture(name="scu")
@@ -251,8 +251,7 @@ class TestGeneral:
         azel = scu.convert_enum_to_int("AxisSelectType", "AzEl")
         assert scu.commands[Command.STOP.value](azel) == done
         sleep(0.5)
-        assert scu.deactivate_az() == done
-        assert scu.deactivate_el() == done
+        assert scu.deactivate_dmc(azel) == done
         assert scu.deactivate_fi() == done
         sleep(0.5)
         assert scu.move_to_band("Band_1") == activated

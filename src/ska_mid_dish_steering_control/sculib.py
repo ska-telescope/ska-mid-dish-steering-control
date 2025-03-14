@@ -144,7 +144,8 @@ TOP_NODE_ID: Final = "i=2253"
 SKIP_NODE_ID: Final = "ns=22;s=Trace"
 SERVER_STATUS_ID: Final = "i=2256"
 PLC_PRG: Final = "Logic.Application.PLC_PRG"
-PLC_PRG_ID: Final = "ns=2;s=Application.PLC_PRG"
+APP_STATE: Final = "Logic.Application.ApplicationState"
+CURRENT_MODE: Final = "System.CurrentMode"
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -1200,21 +1201,31 @@ class SteeringControlUnit:
             skip_node_id=SKIP_NODE_ID,
         )
         # Check if the PLC_PRG node exists, and if not, scan it separately and add its
-        # nodes, attributes, and commands to the dictionaries. (needed for CETC sim)
+        # nodes, attributes, and commands to the dictionaries. (needed for simulators)
         if PLC_PRG not in self._nodes:
+            plc_prg_node = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [f"{self._ns_idx}:{node}" for node in PLC_PRG.split(".")]
+                ),
+                self.event_loop,
+            ).result()
             (
                 nodes,
                 attributes,
                 commands,
                 _,  # timestamp
             ) = self._check_cache_and_generate_node_dicts(
-                top_level_node=self._client.get_node(PLC_PRG_ID),
+                top_level_node=plc_prg_node,
                 top_level_node_name="PLC_PRG",
             )
             self._nodes.update(nodes)
             self._attributes.update(attributes)
             self._commands.update(commands)
         self._nodes_reversed = {val[0]: key for key, val in self.nodes.items()}
+        if APP_STATE not in self._nodes:
+            self.add_attribute_to_dicts(APP_STATE)
+        if CURRENT_MODE not in self._nodes:
+            self.add_attribute_to_dicts(CURRENT_MODE)
 
         # Check if we also want the PLC's parameters for the drives and the PLC program.
         # But only if we are not connected to the simulator.
@@ -1232,6 +1243,33 @@ class SteeringControlUnit:
                 _,  # Parameter tree has no commands, so it is just an empty dict
                 _,  # timestamp
             ) = self._check_cache_and_generate_node_dicts(parameter_node, top_node_name)
+
+    def add_attribute_to_dicts(self, node_dot_notation_name: str) -> None:
+        """
+        Add an attribute (variable node) to the `nodes` and `attributes` dicts.
+
+        :param node_dot_notation_name: full dot notation name (path) of the variable
+            node under the `Objects`  node.
+        """
+        try:
+            node = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [
+                        f"{self._ns_idx}:{node}"
+                        for node in node_dot_notation_name.split(".")
+                    ]
+                ),
+                self.event_loop,
+            ).result()
+        except ua.UaStatusCodeError as e:
+            msg = f"Node not found at {node_dot_notation_name}"
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            return
+        self._nodes[node_dot_notation_name] = (node, ua.NodeClass.Variable)
+        self._nodes_reversed[node] = node_dot_notation_name
+        self._attributes[node_dot_notation_name] = create_rw_attribute(
+            node, self.event_loop, node_dot_notation_name
+        )
 
     def _check_cache_and_generate_node_dicts(
         self,
