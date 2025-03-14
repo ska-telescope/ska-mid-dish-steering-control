@@ -146,6 +146,7 @@ SERVER_STATUS_ID: Final = "i=2256"
 PLC_PRG: Final = "Logic.Application.PLC_PRG"
 APP_STATE: Final = "Logic.Application.ApplicationState"
 CURRENT_MODE: Final = "System.CurrentMode"
+MIN_EXPECTED_SAMPLE_RATE: Final = ua.Duration(50)
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -1745,7 +1746,8 @@ class SteeringControlUnit:
     def subscribe(
         self,
         attributes: str | list[str],
-        period: int = 100,
+        publishing_interval: int,
+        buffer_samples: bool = True,
         data_queue: queue.Queue | None = None,
         bad_shutdown_callback: Callable[[str], None] | None = None,
         subscription_handler: SubscriptionHandler | None = None,
@@ -1755,7 +1757,11 @@ class SteeringControlUnit:
 
         :param attributes: A single OPC-UA attribute or a list of attributes to
             subscribe to.
-        :param period: The period in milliseconds for checking attribute updates.
+        :param publishing_interval: The interval in milliseconds for receiving any/all
+            data change notifications.
+        :param buffer_samples: Request that the server buffers all samples taken during
+            a publishing interval, otherwise only the latest sample is received.
+            Defauls to True.
         :param data_queue: A queue to store the subscribed attribute data. If None, uses
             the default subscription queue.
         :return: unique identifier for the subscription and lists of missing/bad nodes.
@@ -1776,7 +1782,7 @@ class SteeringControlUnit:
             attributes = [
                 attributes,
             ]
-        nodes = []
+        nodes: list[Node] = []
         missing_nodes = []
         bad_nodes = []
         uid = time.monotonic_ns()
@@ -1792,15 +1798,27 @@ class SteeringControlUnit:
                 "subscribed to for event updates: %s",
                 missing_nodes,
             )
+        parameters = ua.CreateSubscriptionParameters(publishing_interval)
         subscription = asyncio.run_coroutine_threadsafe(
-            self._client.create_subscription(period, subscription_handler),
+            self._client.create_subscription(parameters, subscription_handler),
             self.event_loop,
         ).result()
         if nodes:
             subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
+            queue_size = ua.Counter(
+                max(
+                    1000 / MIN_EXPECTED_SAMPLE_RATE,  # Min queue for 1 sec of samples
+                    publishing_interval / MIN_EXPECTED_SAMPLE_RATE + 1,
+                )
+                if buffer_samples
+                else 0  # No queue, only latest sample is received
+            )
             try:
                 handles = asyncio.run_coroutine_threadsafe(
-                    subscription.subscribe_data_change(subscribe_nodes), self.event_loop
+                    subscription.subscribe_data_change(
+                        nodes=subscribe_nodes, queuesize=queue_size
+                    ),
+                    self.event_loop,
                 ).result()
             except ua.UaStatusCodeError as e:
                 # Exceptions are only generated when subscribe_data_change is called
