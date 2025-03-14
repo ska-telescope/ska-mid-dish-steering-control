@@ -755,6 +755,36 @@ class SteeringControlUnit:
             server_version = None
         return server_version
 
+    @cached_property
+    def min_supported_sample_rate(self) -> float | None:
+        """
+        The 'MinSupportedSampleRate' of the server that SCU is connected to.
+
+        Returns None if the 'MinSupportedSampleRate' could not be read successfully, or
+            if it is not set (value is null or 0).
+        """
+        try:
+            node = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [
+                        f"{self._ns_idx}:Server",
+                        f"{self._ns_idx}:ServerCapabilities",
+                        f"{self._ns_idx}:MinSupportedSampleRate",
+                    ]
+                ),
+                self.event_loop,
+            ).result()
+            min_sample_rate: float = asyncio.run_coroutine_threadsafe(
+                node.get_value(), self.event_loop
+            ).result()
+            if not min_sample_rate:
+                min_sample_rate = None
+        except Exception as e:
+            msg = "Failed to read value of MinSupportedSampleRate attribute."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            min_sample_rate = None
+        return min_sample_rate
+
     @property
     def nodes(self) -> NodeDict:
         """Dictionary of the 'Server' node's entire tree of `asyncua.Node` objects."""
@@ -1805,10 +1835,15 @@ class SteeringControlUnit:
         ).result()
         if nodes:
             subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
+            sample_rate = (
+                self.min_supported_sample_rate
+                if self.min_supported_sample_rate
+                else MIN_EXPECTED_SAMPLE_RATE
+            )
             queue_size = ua.Counter(
                 max(
-                    1000 / MIN_EXPECTED_SAMPLE_RATE,  # Min queue for 1 sec of samples
-                    publishing_interval / MIN_EXPECTED_SAMPLE_RATE + 1,
+                    1000 / sample_rate,  # Minimum queue for 1 sec of samples
+                    publishing_interval / sample_rate + 1,
                 )
                 if buffer_samples
                 else 0  # No queue, only latest sample is received
