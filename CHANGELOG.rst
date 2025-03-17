@@ -2,6 +2,18 @@
 Changelog
 =========
 
+Unreleased
+==========
+
+Changed
+-------
+- WOM-693: Changes to ``subscribe()`` method:
+
+  - The ``period`` argument has been renamed to ``publishing_interval`` to match OPC-UA nomenclature, and no longer has a default value.
+  - The client now requests that samples are buffered on the server (at its default rate). All samples are then received concurrently at the set publishing interval. 
+  - The 'MinSupportedSampleRate' value of the server is read to set an appropriate queue size for sample buffering. 
+  - The optional ``buffer_samples`` argument can be explicitly set to ``False`` to revert to the original behaviour of only receiving the latest sample at the publishing interval. 
+
 0.5.1
 =====
 
@@ -15,6 +27,7 @@ Fixed
 Changed
 -------
 - WOM-628: 
+
   - The 'Server' tree is scanned by default for the ``nodes``, ``attributes`` and ``commands`` dictionaries, which includes the 'PLC_PRG' tree, but the 'Trace' tree is skipped. 
   - Renamed ``plc_prg_nodes_timestamp`` property to just ``nodes_timestamp``.
   - The 'Parameter' tree is no longer scanned by default: Renamed the ``gui_app`` argument of ``SteeringControlUnit`` class (that was used by the DiSQ GUI) to ``scan_parameter_node`` and inverted its logic. It defaults to ``False`` and must be set to ``True`` to scan the 'Parameter' tree.
