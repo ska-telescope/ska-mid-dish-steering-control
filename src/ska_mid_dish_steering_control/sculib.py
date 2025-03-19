@@ -1777,10 +1777,10 @@ class SteeringControlUnit:
         self,
         attributes: str | list[str],
         publishing_interval: int,
-        buffer_samples: bool = True,
         data_queue: queue.Queue | None = None,
         bad_shutdown_callback: Callable[[str], None] | None = None,
         subscription_handler: SubscriptionHandler | None = None,
+        buffer_samples: bool = True,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1789,9 +1789,6 @@ class SteeringControlUnit:
             subscribe to.
         :param publishing_interval: The interval in milliseconds for receiving any/all
             data change notifications.
-        :param buffer_samples: Request that the server buffers all samples taken during
-            a publishing interval, otherwise only the latest sample is received.
-            Defauls to True.
         :param data_queue: A queue to store the subscribed attribute data. If None, uses
             the default subscription queue.
         :return: unique identifier for the subscription and lists of missing/bad nodes.
@@ -1801,6 +1798,9 @@ class SteeringControlUnit:
             reused, rather than creating a new instance every time.
             There is a limit on the number of handlers a server can have.
             Defaults to None.
+        :param buffer_samples: Request that the server buffers all samples taken during
+            a publishing interval, otherwise only the latest sample is received.
+            Defauls to True.
         """
         if data_queue is None:
             data_queue = self._subscription_queue
