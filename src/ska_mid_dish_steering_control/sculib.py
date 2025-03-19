@@ -146,6 +146,7 @@ SERVER_STATUS_ID: Final = "i=2256"
 PLC_PRG: Final = "Logic.Application.PLC_PRG"
 APP_STATE: Final = "Logic.Application.ApplicationState"
 CURRENT_MODE: Final = "System.CurrentMode"
+MIN_EXPECTED_SAMPLE_RATE: Final = ua.Duration(50)
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -753,6 +754,36 @@ class SteeringControlUnit:
             asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
             server_version = None
         return server_version
+
+    @cached_property
+    def min_supported_sample_rate(self) -> float | None:
+        """
+        The 'MinSupportedSampleRate' of the server that SCU is connected to.
+
+        Returns None if the 'MinSupportedSampleRate' could not be read successfully, or
+            if it is not set (value is null or 0).
+        """
+        try:
+            node = asyncio.run_coroutine_threadsafe(
+                self._client.nodes.objects.get_child(
+                    [
+                        f"{self._ns_idx}:Server",
+                        f"{self._ns_idx}:ServerCapabilities",
+                        f"{self._ns_idx}:MinSupportedSampleRate",
+                    ]
+                ),
+                self.event_loop,
+            ).result()
+            min_sample_rate: float = asyncio.run_coroutine_threadsafe(
+                node.get_value(), self.event_loop
+            ).result()
+            if not min_sample_rate:
+                min_sample_rate = None
+        except Exception as e:
+            msg = "Failed to read value of MinSupportedSampleRate attribute."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            min_sample_rate = None
+        return min_sample_rate
 
     @property
     def nodes(self) -> NodeDict:
@@ -1745,17 +1776,19 @@ class SteeringControlUnit:
     def subscribe(
         self,
         attributes: str | list[str],
-        period: int = 100,
+        publishing_interval: int,
         data_queue: queue.Queue | None = None,
         bad_shutdown_callback: Callable[[str], None] | None = None,
         subscription_handler: SubscriptionHandler | None = None,
+        buffer_samples: bool = True,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
 
         :param attributes: A single OPC-UA attribute or a list of attributes to
             subscribe to.
-        :param period: The period in milliseconds for checking attribute updates.
+        :param publishing_interval: The interval in milliseconds for receiving any/all
+            data change notifications.
         :param data_queue: A queue to store the subscribed attribute data. If None, uses
             the default subscription queue.
         :return: unique identifier for the subscription and lists of missing/bad nodes.
@@ -1765,6 +1798,9 @@ class SteeringControlUnit:
             reused, rather than creating a new instance every time.
             There is a limit on the number of handlers a server can have.
             Defaults to None.
+        :param buffer_samples: Request that the server buffers all samples taken during
+            a publishing interval, otherwise only the latest sample is received.
+            Defauls to True.
         """
         if data_queue is None:
             data_queue = self._subscription_queue
@@ -1776,7 +1812,7 @@ class SteeringControlUnit:
             attributes = [
                 attributes,
             ]
-        nodes = []
+        nodes: list[Node] = []
         missing_nodes = []
         bad_nodes = []
         uid = time.monotonic_ns()
@@ -1792,15 +1828,32 @@ class SteeringControlUnit:
                 "subscribed to for event updates: %s",
                 missing_nodes,
             )
+        parameters = ua.CreateSubscriptionParameters(publishing_interval)
         subscription = asyncio.run_coroutine_threadsafe(
-            self._client.create_subscription(period, subscription_handler),
+            self._client.create_subscription(parameters, subscription_handler),
             self.event_loop,
         ).result()
         if nodes:
             subscribe_nodes = list(set(nodes))  # Remove any potential node duplicates
+            sample_rate = (
+                self.min_supported_sample_rate
+                if self.min_supported_sample_rate
+                else MIN_EXPECTED_SAMPLE_RATE
+            )
+            queue_size = ua.Counter(
+                max(
+                    1000 / sample_rate,  # Minimum queue for 1 sec of samples
+                    publishing_interval / sample_rate + 1,
+                )
+                if buffer_samples
+                else 0  # No queue, only latest sample is received
+            )
             try:
                 handles = asyncio.run_coroutine_threadsafe(
-                    subscription.subscribe_data_change(subscribe_nodes), self.event_loop
+                    subscription.subscribe_data_change(
+                        nodes=subscribe_nodes, queuesize=queue_size
+                    ),
+                    self.event_loop,
                 ).result()
             except ua.UaStatusCodeError as e:
                 # Exceptions are only generated when subscribe_data_change is called
