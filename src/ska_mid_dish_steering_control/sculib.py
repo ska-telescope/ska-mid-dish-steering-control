@@ -1772,6 +1772,7 @@ class SteeringControlUnit:
     # --------------------
     # OPC-UA subscriptions
     # --------------------
+    # pylint: disable=too-many-branches
     def subscribe(
         self,
         attributes: str | list[str],
@@ -1780,6 +1781,7 @@ class SteeringControlUnit:
         bad_shutdown_callback: Callable[[str], None] | None = None,
         subscription_handler: SubscriptionHandler | None = None,
         buffer_samples: bool = True,
+        trigger_on_change: bool = True,
     ) -> tuple[int, list, list]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1799,6 +1801,8 @@ class SteeringControlUnit:
             Defaults to None.
         :param buffer_samples: Request that the server buffers all samples taken during
             a publishing interval, otherwise only the latest sample is received.
+            Defauls to True.
+        :param trigger_on_change: Subscribe to data changes only, rather than all data.
             Defauls to True.
         """
         # Check input args
@@ -1851,12 +1855,37 @@ class SteeringControlUnit:
             else 0  # No queue, only latest sample is received
         )
         try:
-            handles = asyncio.run_coroutine_threadsafe(
-                subscription.subscribe_data_change(
-                    nodes=subscribe_nodes, queuesize=queue_size
-                ),
-                self.event_loop,
-            ).result()
+            if trigger_on_change:
+                handles = asyncio.run_coroutine_threadsafe(
+                    subscription.subscribe_data_change(
+                        nodes=subscribe_nodes, queuesize=queue_size
+                    ),
+                    self.event_loop,
+                ).result()
+            else:
+                # Define a data change filter to trigger on timestamp
+                data_change_filter = ua.DataChangeFilter(
+                    ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
+                    ua.DeadbandType.None_,  # No deadband
+                )
+                monitored_items = []
+                for i, node in enumerate(subscribe_nodes):
+                    monitored_items.append(
+                        ua.MonitoredItemCreateRequest(
+                            ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value),
+                            ua.MonitoringMode.Reporting,  # Ensure updates are pushed
+                            ua.MonitoringParameters(
+                                ua.UInt32((uid + i) & 0xFFFFFFFF),
+                                sample_rate,
+                                data_change_filter,
+                                queue_size,
+                            ),
+                        )
+                    )
+                handles = asyncio.run_coroutine_threadsafe(
+                    subscription.create_monitored_items(monitored_items),
+                    self.event_loop,
+                ).result()
         except ua.UaStatusCodeError as e:
             # Exceptions are only generated when subscribe_data_change is called
             # with a single node input.
