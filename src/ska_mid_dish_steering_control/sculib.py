@@ -1782,7 +1782,7 @@ class SteeringControlUnit:
         subscription_handler: SubscriptionHandler | None = None,
         buffer_samples: bool = True,
         trigger_on_change: bool = True,
-    ) -> tuple[int, list, list]:
+    ) -> tuple[int, list[str], list[Node]]:
         """
         Subscribe to OPC-UA attributes for event updates.
 
@@ -1804,6 +1804,8 @@ class SteeringControlUnit:
             Defauls to True.
         :param trigger_on_change: Subscribe to data changes only, rather than all data.
             Defauls to True.
+        :return: tuple containing unique identifier for the subscription and lists of
+            missing nodes' names and bad (failed to subscribe) nodes.
         """
         # Check input args
         attributes_set = (
@@ -1818,7 +1820,7 @@ class SteeringControlUnit:
 
         # Build list of nodes to subscribe to
         subscribe_nodes: list[Node] = []
-        missing_nodes: list[Node] = []
+        missing_nodes: list[str] = []
         bad_nodes: list[Node] = []
         uid = time.monotonic_ns()
         for attribute in attributes_set:
