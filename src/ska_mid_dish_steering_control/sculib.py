@@ -348,7 +348,7 @@ class SubscriptionHandler:
 class SubscriptionDetails(TypedDict):
     """Details of a subscription."""
 
-    handles: list[str | ua.StatusCode]
+    handles: list[int | ua.StatusCode]
     nodes: list[Node]
     subscription: Subscription
 
@@ -1811,6 +1811,63 @@ class SteeringControlUnit:
             )
         return subscribe_nodes, missing_nodes
 
+    def _make_monitored_item_create_requests(
+        self,
+        nodes: list[Node],
+        publishing_interval: int,
+        buffer_samples: bool = True,
+        trigger_on_change: bool = True,
+    ) -> list[ua.MonitoredItemCreateRequest]:
+        """
+        Make MonitoredItemCreateRequest objects for a list of nodes.
+
+        :param nodes: List of nodes to make MonitoredItemCreateRequest objects for.
+        :param publishing_interval: The interval in milliseconds for receiving any/all
+            data change notifications.
+        :param buffer_samples: Request that the server buffers all samples taken during
+            a publishing interval, otherwise only the latest sample is received.
+            Defauls to True.
+        :param trigger_on_change: Subscribe to data changes only, rather than all data.
+            Defauls to True.
+        :return: List of MonitoredItemCreateRequest objects.
+        """
+        sample_rate = (
+            self.min_supported_sample_rate
+            if self.min_supported_sample_rate
+            else MIN_EXPECTED_SAMPLE_RATE
+        )
+        queue_size = ua.Counter(
+            max(
+                1000 / sample_rate,  # Minimum queue for 1 sec of samples
+                publishing_interval / sample_rate + 1,
+            )
+            if buffer_samples
+            else 0  # No queue, only latest sample is received
+        )
+        data_change_filter = (
+            None
+            if trigger_on_change
+            else ua.DataChangeFilter(  # Define a filter to trigger on timestamp
+                ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
+                ua.DeadbandType.None_,  # No deadband
+            )
+        )
+        # Instantiate MonitoredItemCreateRequest objects
+        monitored_item_requests: list[ua.MonitoredItemCreateRequest] = []
+        for i, node in enumerate(nodes):
+            mparams = ua.MonitoringParameters()
+            mparams.ClientHandle = ua.UInt32(i)
+            mparams.SamplingInterval = sample_rate
+            mparams.QueueSize = queue_size
+            if data_change_filter:
+                mparams.Filter = data_change_filter
+            mir = ua.MonitoredItemCreateRequest()
+            mir.ItemToMonitor = ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value)
+            mir.MonitoringMode = ua.MonitoringMode.Reporting
+            mir.RequestedParameters = mparams
+            monitored_item_requests.append(mir)
+        return monitored_item_requests
+
     def subscribe(
         self,
         attributes: str | list[str],
@@ -1872,42 +1929,12 @@ class SteeringControlUnit:
         uid = time.monotonic_ns()
         bad_nodes: list[Node] = []
         handles: list[int | ua.StatusCode] = []
-        sample_rate = (
-            self.min_supported_sample_rate
-            if self.min_supported_sample_rate
-            else MIN_EXPECTED_SAMPLE_RATE
+        monitored_item_requests = self._make_monitored_item_create_requests(
+            subscribe_nodes,
+            publishing_interval,
+            buffer_samples,
+            trigger_on_change,
         )
-        queue_size = ua.Counter(
-            max(
-                1000 / sample_rate,  # Minimum queue for 1 sec of samples
-                publishing_interval / sample_rate + 1,
-            )
-            if buffer_samples
-            else 0  # No queue, only latest sample is received
-        )
-        data_change_filter = (
-            None
-            if trigger_on_change
-            else ua.DataChangeFilter(  # Define a filter to trigger on timestamp
-                ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
-                ua.DeadbandType.None_,  # No deadband
-            )
-        )
-
-        # Instantiate MonitoredItemCreateRequest objects
-        monitored_item_requests: list[ua.MonitoredItemCreateRequest] = []
-        for i, node in enumerate(subscribe_nodes):
-            mparams = ua.MonitoringParameters()
-            mparams.ClientHandle = ua.UInt32((uid + i) & 0xFFFFFFFF)
-            mparams.SamplingInterval = sample_rate
-            mparams.QueueSize = queue_size
-            if data_change_filter:
-                mparams.Filter = data_change_filter
-            mir = ua.MonitoredItemCreateRequest()
-            mir.ItemToMonitor = ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value)
-            mir.MonitoringMode = ua.MonitoringMode.Reporting
-            mir.RequestedParameters = mparams
-            monitored_item_requests.append(mir)
 
         # Try to create monitored items on server and handle any exceptions
         try:
