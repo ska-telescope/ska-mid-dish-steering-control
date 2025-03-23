@@ -121,6 +121,7 @@ from pathlib import Path
 from typing import Any, Callable, Final, Protocol, Type, TypedDict
 
 from asyncua import Client, Node, ua
+from asyncua.common.subscription import Subscription
 from asyncua.crypto.cert_gen import setup_self_signed_certificate
 from asyncua.crypto.security_policies import SecurityPolicyBasic256
 from cryptography.x509.oid import ExtendedKeyUsageOID
@@ -344,6 +345,14 @@ class SubscriptionHandler:
                 )
 
 
+class SubscriptionDetails(TypedDict):
+    """Details of a subscription."""
+
+    handles: list[str | ua.StatusCode]
+    nodes: list[Node]
+    subscription: Subscription
+
+
 class CachedNodeDetails(TypedDict):
     """Inidividual cached node details."""
 
@@ -431,7 +440,7 @@ class SteeringControlUnit:
         # Other local variables
         self._client: Client | None = None
         self._event_loop_thread: threading.Thread | None = None
-        self._subscriptions: dict[int, dict] = {}
+        self._subscriptions: dict[int, SubscriptionDetails] = {}
         self._subscription_queue: queue.Queue = queue.Queue()
         self._user = ua.UInt16(0)  # NoAuthority
         self._session_id = ua.UInt16(0)
@@ -1772,7 +1781,36 @@ class SteeringControlUnit:
     # --------------------
     # OPC-UA subscriptions
     # --------------------
-    # pylint: disable=too-many-branches
+    def _get_nodes_to_subscribe(
+        self,
+        attributes: str | list[str],
+    ) -> tuple[list[Node], list[str]]:
+        """
+        Get nodes to subscribe to from list of attribute names.
+
+        :param attributes: Single or list of attribute names.
+        :return: List of nodes to subscribe to and list of missing attributes.
+        """
+        subscribe_nodes: list[Node] = []
+        missing_nodes: list[str] = []
+        attributes_set = (
+            set(attributes) if isinstance(attributes, list) else {attributes}
+        )  # Cast to set to remove any duplicates
+        attributes_set.discard("")
+        # Build list of nodes to subscribe to
+        for attribute in attributes_set:
+            if attribute in self.nodes:
+                subscribe_nodes.append(self.nodes[attribute][0])
+            else:
+                missing_nodes.append(attribute)
+        if missing_nodes:
+            logger.debug(
+                "The following attributes were not found on the OPCUA server and "
+                "not subscribed to for event updates: %s",
+                missing_nodes,
+            )
+        return subscribe_nodes, missing_nodes
+
     def subscribe(
         self,
         attributes: str | list[str],
@@ -1782,7 +1820,7 @@ class SteeringControlUnit:
         subscription_handler: SubscriptionHandler | None = None,
         buffer_samples: bool = True,
         trigger_on_change: bool = True,
-    ) -> tuple[int, list[str], list[Node]]:
+    ) -> tuple[int | None, list[str], list[Node]]:
         """
         Subscribe to OPC-UA attributes for event updates.
 
@@ -1807,42 +1845,33 @@ class SteeringControlUnit:
         :return: tuple containing unique identifier for the subscription and lists of
             missing nodes' names and bad (failed to subscribe) nodes.
         """
+        subscribe_nodes, missing_nodes = self._get_nodes_to_subscribe(attributes)
+        if not subscribe_nodes:
+            return None, missing_nodes, []
+
         # Check input args
-        attributes_set = (
-            set(attributes) if isinstance(attributes, list) else {attributes}
-        )  # Cast to set to remove any duplicates
-        attributes_set.discard("")
         data_queue = data_queue if data_queue else self._subscription_queue
         if not subscription_handler:
             subscription_handler = SubscriptionHandler(
                 data_queue, self._nodes_reversed, bad_shutdown_callback
             )
 
-        # Build list of nodes to subscribe to
-        subscribe_nodes: list[Node] = []
-        missing_nodes: list[str] = []
-        bad_nodes: list[Node] = []
-        uid = time.monotonic_ns()
-        for attribute in attributes_set:
-            if attribute in self.nodes:
-                subscribe_nodes.append(self.nodes[attribute][0])
-            else:
-                missing_nodes.append(attribute)
-        if missing_nodes:
-            logger.debug(
-                "The following attributes were not found on the OPCUA server and not "
-                "subscribed to for event updates: %s",
-                missing_nodes,
-            )
-        if not subscribe_nodes:
-            return uid, missing_nodes, bad_nodes
+        # Create Subscription object
+        try:
+            parameters = ua.CreateSubscriptionParameters(publishing_interval)
+            subscription = asyncio.run_coroutine_threadsafe(
+                self._client.create_subscription(parameters, subscription_handler),
+                self.event_loop,
+            ).result()
+        except Exception as e:
+            msg = "Failed to create a Subscription object on the server!"
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            return None, missing_nodes, []
 
-        # Create subscription
-        parameters = ua.CreateSubscriptionParameters(publishing_interval)
-        subscription = asyncio.run_coroutine_threadsafe(
-            self._client.create_subscription(parameters, subscription_handler),
-            self.event_loop,
-        ).result()
+        # Variables for subscription
+        uid = time.monotonic_ns()
+        bad_nodes: list[Node] = []
+        handles: list[int | ua.StatusCode] = []
         sample_rate = (
             self.min_supported_sample_rate
             if self.min_supported_sample_rate
@@ -1856,6 +1885,7 @@ class SteeringControlUnit:
             if buffer_samples
             else 0  # No queue, only latest sample is received
         )
+        # Try to subscribe to nodes and handle any exceptions
         try:
             if trigger_on_change:
                 handles = asyncio.run_coroutine_threadsafe(
@@ -1870,9 +1900,9 @@ class SteeringControlUnit:
                     ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
                     ua.DeadbandType.None_,  # No deadband
                 )
-                monitored_items = []
+                monitored_item_requests: list[ua.MonitoredItemCreateRequest] = []
                 for i, node in enumerate(subscribe_nodes):
-                    monitored_items.append(
+                    monitored_item_requests.append(
                         ua.MonitoredItemCreateRequest(
                             ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value),
                             ua.MonitoringMode.Reporting,  # Ensure updates are pushed
@@ -1885,11 +1915,11 @@ class SteeringControlUnit:
                         )
                     )
                 handles = asyncio.run_coroutine_threadsafe(
-                    subscription.create_monitored_items(monitored_items),
+                    subscription.create_monitored_items(monitored_item_requests),
                     self.event_loop,
                 ).result()
         except ua.UaStatusCodeError as e:
-            # Exceptions are only generated when subscribe_data_change is called
+            # An UaStatusCodeError can only occur when subscribe_data_change is called
             # with a single node input.
             msg = (
                 f"Failed to subscribe to node '{subscribe_nodes[0].nodeid.to_string()}'"
@@ -1897,12 +1927,16 @@ class SteeringControlUnit:
             asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
             bad_nodes.append(subscribe_nodes[0])
             subscribe_nodes.pop(0)
+        except Exception as e:
+            msg = "Failed to subscribe to any nodes!"
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            subscribe_nodes = []
 
         # subscribe_data_change returns an int for a single node, and a list for
         # mulitple nodes
         if isinstance(handles, int):
             handles = list(handles)
-        # The list contains ints for sucessful subscriptions, and status codes when
+        # The list contains ints for successful subscriptions, and status codes when
         # the subscription has failed.
         else:
             for i, node in enumerate(subscribe_nodes):
