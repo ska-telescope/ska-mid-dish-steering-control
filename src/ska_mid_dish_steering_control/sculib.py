@@ -1885,65 +1885,48 @@ class SteeringControlUnit:
             if buffer_samples
             else 0  # No queue, only latest sample is received
         )
-        # Try to subscribe to nodes and handle any exceptions
-        try:
-            if trigger_on_change:
-                handles = asyncio.run_coroutine_threadsafe(
-                    subscription.subscribe_data_change(
-                        nodes=subscribe_nodes, queuesize=queue_size
-                    ),
-                    self.event_loop,
-                ).result()
-            else:
-                # Define a data change filter to trigger on timestamp
-                data_change_filter = ua.DataChangeFilter(
-                    ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
-                    ua.DeadbandType.None_,  # No deadband
-                )
-                monitored_item_requests: list[ua.MonitoredItemCreateRequest] = []
-                for i, node in enumerate(subscribe_nodes):
-                    monitored_item_requests.append(
-                        ua.MonitoredItemCreateRequest(
-                            ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value),
-                            ua.MonitoringMode.Reporting,  # Ensure updates are pushed
-                            ua.MonitoringParameters(
-                                ua.UInt32((uid + i) & 0xFFFFFFFF),
-                                sample_rate,
-                                data_change_filter,
-                                queue_size,
-                            ),
-                        )
-                    )
-                handles = asyncio.run_coroutine_threadsafe(
-                    subscription.create_monitored_items(monitored_item_requests),
-                    self.event_loop,
-                ).result()
-        except ua.UaStatusCodeError as e:
-            # An UaStatusCodeError can only occur when subscribe_data_change is called
-            # with a single node input.
-            msg = (
-                f"Failed to subscribe to node '{subscribe_nodes[0].nodeid.to_string()}'"
+        data_change_filter = (
+            None
+            if trigger_on_change
+            else ua.DataChangeFilter(  # Define a filter to trigger on timestamp
+                ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
+                ua.DeadbandType.None_,  # No deadband
             )
-            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
-            bad_nodes.append(subscribe_nodes[0])
-            subscribe_nodes.pop(0)
+        )
+
+        # Instantiate MonitoredItemCreateRequest objects
+        monitored_item_requests: list[ua.MonitoredItemCreateRequest] = []
+        for i, node in enumerate(subscribe_nodes):
+            mparams = ua.MonitoringParameters()
+            mparams.ClientHandle = ua.UInt32((uid + i) & 0xFFFFFFFF)
+            mparams.SamplingInterval = sample_rate
+            mparams.QueueSize = queue_size
+            if data_change_filter:
+                mparams.Filter = data_change_filter
+            mir = ua.MonitoredItemCreateRequest()
+            mir.ItemToMonitor = ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value)
+            mir.MonitoringMode = ua.MonitoringMode.Reporting
+            mir.RequestedParameters = mparams
+            monitored_item_requests.append(mir)
+
+        # Try to create monitored items on server and handle any exceptions
+        try:
+            handles = asyncio.run_coroutine_threadsafe(
+                subscription.create_monitored_items(monitored_item_requests),
+                self.event_loop,
+            ).result()
         except Exception as e:
             msg = "Failed to subscribe to any nodes!"
             asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
             subscribe_nodes = []
 
-        # subscribe_data_change returns an int for a single node, and a list for
-        # mulitple nodes
-        if isinstance(handles, int):
-            handles = list(handles)
-        # The list contains ints for successful subscriptions, and status codes when
-        # the subscription has failed.
-        else:
-            for i, node in enumerate(subscribe_nodes):
-                if isinstance(handles[i], ua.uatypes.StatusCode):
-                    bad_nodes.append(node)
-                    subscribe_nodes.pop(i)
-                    handles.pop(i)
+        # The handles list contains ints for successful subscriptions, and status codes
+        # when the subscription has failed.
+        for i, node in enumerate(subscribe_nodes):
+            if isinstance(handles[i], ua.uatypes.StatusCode):
+                bad_nodes.append(node)
+                subscribe_nodes.pop(i)
+                handles.pop(i)
 
         self._subscriptions[uid] = {
             "handles": handles,
