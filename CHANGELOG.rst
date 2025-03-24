@@ -13,6 +13,8 @@ Changed
   - The client now requests that samples are buffered on the server (at its default rate). All samples are then received concurrently at the set publishing interval. 
   - The 'MinSupportedSampleRate' value of the server is read to set an appropriate queue size for sample buffering. 
   - The optional ``buffer_samples`` argument can be explicitly set to ``False`` to revert to the original behaviour of only receiving the latest sample at the publishing interval. 
+  
+- WOM-694: Updated ``subscribe()`` method with an optional argument ``trigger_on_change``. If it is set to ``False``, the subscription will trigger on timestamps - i.e. notifications will always be received at the ``publishing_interval``. This is useful for attributes that are not expected to change frequently, but need to be read at a high rate.
 
 0.5.1
 =====
