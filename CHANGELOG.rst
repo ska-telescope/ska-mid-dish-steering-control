@@ -16,6 +16,10 @@ Changed
   
 - WOM-694: Updated ``subscribe()`` method with an optional argument ``trigger_on_change``. If it is set to ``False``, the subscription will trigger on timestamps - i.e. notifications will always be received at the ``publishing_interval``. This is useful for attributes that are not expected to change frequently, but need to be read at a high rate.
 
+Fixed
+-----
+- WOM-695: Check for connected client before trying to release authority, unsubscribe and disconnect.
+
 0.5.1
 =====
 
