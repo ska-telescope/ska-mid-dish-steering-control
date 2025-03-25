@@ -914,6 +914,8 @@ class SteeringControlUnit:
         :param user: Authority user name - DscCmdAuthorityType enum.
         :return: The result of the command execution.
         """
+        if Command.TAKE_AUTH.value not in self.commands:
+            return ResultCode.NOT_EXECUTED, "TakeAuth command not available."
         user_int = (
             self.convert_enum_to_int("DscCmdAuthorityType", user)
             if isinstance(user, str)
@@ -933,6 +935,8 @@ class SteeringControlUnit:
 
         :return: The result of the command execution.
         """
+        if Command.RELEASE_AUTH.value not in self.commands:
+            return ResultCode.NOT_EXECUTED, "ReleaseAuth command not available."
         code, msg, _ = self.commands[Command.RELEASE_AUTH.value](self._user)
         if code == ResultCode.COMMAND_DONE:
             self._session_id = ua.UInt16(0)
