@@ -517,9 +517,10 @@ class SteeringControlUnit:
         Release any command authority, unsubscribe from all subscriptions, disconnect
         from the server, and stop the event loop if it was started in a separate thread.
         """
-        self.release_authority()
-        self.unsubscribe_all()
-        self.disconnect()
+        if self._client is not None:
+            self.release_authority()
+            self.unsubscribe_all()
+            self.disconnect()
         # Store any updates to attribute data types.
         self._cache_node_ids(self._nodes_cache_dir / f"{TOP_NODE}.json", self._nodes)
         self.cleanup_resources()
@@ -913,6 +914,8 @@ class SteeringControlUnit:
         :param user: Authority user name - DscCmdAuthorityType enum.
         :return: The result of the command execution.
         """
+        if Command.TAKE_AUTH.value not in self.commands:
+            return ResultCode.NOT_EXECUTED, "TakeAuth command not available."
         user_int = (
             self.convert_enum_to_int("DscCmdAuthorityType", user)
             if isinstance(user, str)
@@ -932,6 +935,8 @@ class SteeringControlUnit:
 
         :return: The result of the command execution.
         """
+        if Command.RELEASE_AUTH.value not in self.commands:
+            return ResultCode.NOT_EXECUTED, "ReleaseAuth command not available."
         code, msg, _ = self.commands[Command.RELEASE_AUTH.value](self._user)
         if code == ResultCode.COMMAND_DONE:
             self._session_id = ua.UInt16(0)
