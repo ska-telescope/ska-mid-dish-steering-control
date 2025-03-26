@@ -469,8 +469,10 @@ class SteeringControlUnit:
 
         :raises Exception: If connection to OPC UA server fails.
         """
+        logger.debug("Connecting to server...")
         try:
             self._client = self.connect()
+            logger.debug("Connection successful.")
         except Exception as e:
             msg = (
                 "Cannot connect to the OPC UA server. Please "
@@ -859,6 +861,7 @@ class SteeringControlUnit:
         corresponding ua attributes. Add all found enum types and their values to the
         'opcua_enum_types' dictionary property.
         """
+        logger.debug("Validating Enum types...")
         missing_types = []
         expected_types = [
             "AxisSelectType",
@@ -903,6 +906,8 @@ class SteeringControlUnit:
                 "as expected: %s",
                 str(missing_types),
             )
+        else:
+            logger.debug("Enum types valid.")
 
     # ----------------------
     # Command user authority
@@ -1235,6 +1240,7 @@ class SteeringControlUnit:
         This method may raise exceptions related to asyncio operations.
         """
         # Create node dicts of the top node's tree
+        logger.debug("Scanning from %s: %s", TOP_NODE, TOP_NODE_ID)
         (
             self._nodes,
             self._attributes,
@@ -1254,6 +1260,7 @@ class SteeringControlUnit:
                 ),
                 self.event_loop,
             ).result()
+            logger.debug("Scanning from %s: %s", PLC_PRG, plc_prg_node)
             (
                 nodes,
                 attributes,
@@ -1282,6 +1289,7 @@ class SteeringControlUnit:
                 ),
                 self.event_loop,
             ).result()
+            logger.debug("Scanning from %s: %s", top_node_name, parameter_node)
             (
                 self._parameter_nodes,
                 self._parameter_attributes,
@@ -1383,6 +1391,7 @@ class SteeringControlUnit:
         attributes: AttrDict = {}
         commands: CmdDict = {}
         for node_name, node_details in cache_dict.items():
+            logger.debug("Node from cache: %s", node_name)
             node_id = node_details["opcua_node_str"]
             node_class = node_details["node_class"]
             node: Node = self._client.get_node(node_id)
@@ -1506,6 +1515,7 @@ class SteeringControlUnit:
         :param parent_names: List of parent node names (default is None).
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
         """
+        logger.debug("Scanning reached %s", node)
         if skip_node_id and skip_node_id == node.nodeid.to_string():
             return {}, {}, {}
 
