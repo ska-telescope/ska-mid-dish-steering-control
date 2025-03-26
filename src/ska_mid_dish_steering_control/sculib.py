@@ -142,8 +142,9 @@ SPM_SCHEMA_PATH: Final = Path(
 
 TOP_NODE: Final = "Server"
 TOP_NODE_ID: Final = "i=2253"
-SKIP_NODE_ID: Final = "ns=22;s=Trace"
 SERVER_STATUS_ID: Final = "i=2256"
+PHYSICAL_NAMESPACE: Final = ua.Int16(7)
+TRACE_NAMESPACE: Final = ua.Int16(22)
 PLC_PRG: Final = "Logic.Application.PLC_PRG"
 APP_STATE: Final = "Logic.Application.ApplicationState"
 CURRENT_MODE: Final = "System.CurrentMode"
@@ -1249,7 +1250,11 @@ class SteeringControlUnit:
         ) = self._check_cache_and_generate_node_dicts(
             top_level_node=self._client.get_node(TOP_NODE_ID),
             top_level_node_name=TOP_NODE,
-            skip_node_id=SKIP_NODE_ID,
+            skip_namespaces=[
+                PHYSICAL_NAMESPACE,
+                TRACE_NAMESPACE,
+                self._parameter_ns_idx,
+            ],
         )
         # Check if the PLC_PRG node exists, and if not, scan it separately and add its
         # nodes, attributes, and commands to the dictionaries. (needed for simulators)
@@ -1328,7 +1333,7 @@ class SteeringControlUnit:
         self,
         top_level_node: Node,
         top_level_node_name: str,
-        skip_node_id: str | None = None,
+        skip_namespaces: list[ua.Int16] | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict, str]:
         """
         Check for an existing nodes cache to use and generate the dicts accordingly.
@@ -1339,8 +1344,8 @@ class SteeringControlUnit:
 
         :param top_level_node: The top-level node for which to generate dictionaries.
         :param top_level_node_name: Name of the top-level node.
-        :param skip_node_id: Optional ID of a sub-node to skip when generating the
-            dictionaries, defaults to None.
+        :param skip_namespaces: Optional list of namespace indexes to skip when
+            generating the dictionaries, defaults to None.
         :return: A tuple containing dictionaries for nodes, attributes, and commands, as
             well as a string timestamp of when the dicts were generated.
         """
@@ -1363,7 +1368,7 @@ class SteeringControlUnit:
             timestamp = cached_nodes["timestamp"]
         else:
             node_dicts = self.generate_node_dicts_from_server(
-                top_level_node, top_level_node_name, skip_node_id
+                top_level_node, top_level_node_name, skip_namespaces
             )
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._cache_node_ids(cache_file_path, node_dicts[0])
@@ -1424,7 +1429,7 @@ class SteeringControlUnit:
         self,
         top_level_node: Node,
         top_level_node_name: str,
-        skip_node_id: str | None = None,
+        skip_namespaces: list[ua.Int16] | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
         Generate dicts for nodes, attributes, and commands for a given top-level node.
@@ -1437,8 +1442,8 @@ class SteeringControlUnit:
 
         :param top_level_node: The top-level node for which to generate dictionaries.
         :param top_level_node_name: Name of the top-level node.
-        :param skip_node_id: Optional ID of a sub-node to skip when generating the
-            dictionaries, defaults to None.
+        :param skip_namespaces: Optional list of namespace indexes to skip when
+            generating the dictionaries, defaults to None.
         :return: A tuple containing dictionaries for nodes, attributes, and commands.
         """
         logger.info(
@@ -1446,7 +1451,7 @@ class SteeringControlUnit:
             top_level_node_name,
         )
         nodes, attributes, commands = asyncio.run_coroutine_threadsafe(
-            self._get_sub_nodes(top_level_node, top_level_node_name, skip_node_id),
+            self._get_sub_nodes(top_level_node, top_level_node_name, skip_namespaces),
             self.event_loop,
         ).result()
         nodes.update({top_level_node_name: (top_level_node, ua.NodeClass.Object)})
@@ -1502,7 +1507,7 @@ class SteeringControlUnit:
         self,
         node: Node,
         top_level_node_name: str,
-        skip_node_id: str | None = None,
+        skip_namespaces: list[ua.Int16] | None = None,
         parent_names: list[str] | None = None,
     ) -> tuple[NodeDict, AttrDict, CmdDict]:
         """
@@ -1510,13 +1515,13 @@ class SteeringControlUnit:
 
         :param node: The node to retrieve sub-nodes from.
         :param top_level_node_name: Name of the top-level node.
-        :param skip_node_id: Optional ID of a sub-node to skip when generating the
-            dictionaries, defaults to None.
+        :param skip_namespaces: Optional list of namespace indexes to skip when
+            generating the dictionaries, defaults to None.
         :param parent_names: List of parent node names (default is None).
         :return: A tuple containing dictionaries of nodes, attributes, and commands.
         """
         logger.debug("Scanning reached %s", node)
-        if skip_node_id and skip_node_id == node.nodeid.to_string():
+        if skip_namespaces and node.nodeid.NamespaceIndex in skip_namespaces:
             return {}, {}, {}
 
         nodes: NodeDict = {}
@@ -1542,7 +1547,9 @@ class SteeringControlUnit:
         ):
             children = await node.get_children()
             tasks = [
-                self._get_sub_nodes(child, top_level_node_name, skip_node_id, parents)
+                self._get_sub_nodes(
+                    child, top_level_node_name, skip_namespaces, parents
+                )
                 for child in children
             ]
             results = await asyncio.gather(*tasks)
