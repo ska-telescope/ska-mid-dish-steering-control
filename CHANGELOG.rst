@@ -2,6 +2,16 @@
 Changelog
 =========
 
+0.7.0
+=====
+
+Changed
+-------
+- WOM-704: Changes to node tree scanning (``generate_node_dicts_from_server()`` method):
+
+  - 'Physical' namespace is skipped in addition to 'Trace' and 'Parameter' when scanning the 'Server' tree during setup.
+  - Any OPC-UA and asyncio timeout exceptions are caught, logged and handled gracefully to allow scanning to continue without crashing.
+
 0.6.0
 =====
 
