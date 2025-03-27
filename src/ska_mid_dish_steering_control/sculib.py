@@ -1259,12 +1259,19 @@ class SteeringControlUnit:
         # Check if the PLC_PRG node exists, and if not, scan it separately and add its
         # nodes, attributes, and commands to the dictionaries. (needed for simulators)
         if PLC_PRG not in self._nodes:
-            plc_prg_node = asyncio.run_coroutine_threadsafe(
-                self._client.nodes.objects.get_child(
-                    [f"{self._ns_idx}:{node}" for node in PLC_PRG.split(".")]
-                ),
-                self.event_loop,
-            ).result()
+            try:
+                plc_prg_node = asyncio.run_coroutine_threadsafe(
+                    self._client.nodes.objects.get_child(
+                        [f"{self._ns_idx}:{node}" for node in PLC_PRG.split(".")]
+                    ),
+                    self.event_loop,
+                ).result()
+            except ua.UaStatusCodeError as e:
+                msg = f"Failed to get child node under Objects at '{PLC_PRG}'."
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), self.event_loop
+                )
+                raise e
             logger.debug("Scanning from %s: %s", PLC_PRG, plc_prg_node)
             (
                 nodes,
@@ -1503,6 +1510,7 @@ class SteeringControlUnit:
             node_name = node_name.removeprefix(f"{PLC_PRG}.")
         return node_name, parents
 
+    # pylint: disable=too-many-branches
     async def _get_sub_nodes(
         self,
         node: Node,
@@ -1523,21 +1531,29 @@ class SteeringControlUnit:
         logger.debug("Scanning reached %s", node)
         if skip_namespaces and node.nodeid.NamespaceIndex in skip_namespaces:
             return {}, {}, {}
-
-        nodes: NodeDict = {}
-        attributes: AttrDict = {}
-        commands: CmdDict = {}
-
-        node_class = await node.read_node_class()
-        node_name, parents = await self._generate_full_node_name(
-            node, top_level_node_name, parent_names, node_class
-        )
+        try:
+            node_class = await node.read_node_class()
+        except (ua.UaStatusCodeError, asyncio.TimeoutError) as e:
+            msg = f"Failed trying to read class of node '{node.nodeid.Identifier}'."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            return {}, {}, {}
+        try:
+            node_name, parents = await self._generate_full_node_name(
+                node, top_level_node_name, parent_names, node_class
+            )
+        except (ua.UaStatusCodeError, asyncio.TimeoutError) as e:
+            msg = f"Failed trying to read name of node '{node.nodeid.Identifier}'."
+            asyncio.run_coroutine_threadsafe(handle_exception(e, msg), self.event_loop)
+            return {}, {}, {}
         # Do not add the InputArgument and OutputArgument nodes.
         if node_name.endswith(".InputArguments") or node_name.endswith(
             ".OutputArguments"
         ):
-            return nodes, attributes, commands
+            return {}, {}, {}
 
+        nodes: NodeDict = {}
+        attributes: AttrDict = {}
+        commands: CmdDict = {}
         nodes[node_name] = (node, node_class)
         # Normal node with children
         # Note: 'ServerStatus' is a standard OPC-UA variable node that has children
@@ -1545,18 +1561,39 @@ class SteeringControlUnit:
             node_class == ua.NodeClass.Object
             or node.nodeid.to_string() == SERVER_STATUS_ID
         ):
-            children = await node.get_children()
-            tasks = [
-                self._get_sub_nodes(
-                    child, top_level_node_name, skip_namespaces, parents
+            try:
+                children = await node.get_children()
+            except ua.UaStatusCodeError as e:
+                msg = f"Server error trying to get children of node '{node_name}'."
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), self.event_loop
                 )
-                for child in children
-            ]
-            results = await asyncio.gather(*tasks)
-            for child_nodes, child_attributes, child_commands in results:
-                nodes.update(child_nodes)
-                attributes.update(child_attributes)
-                commands.update(child_commands)
+            except asyncio.TimeoutError as e:
+                msg = (
+                    f"Could not get children of node '{node_name}' in time from server."
+                )
+                asyncio.run_coroutine_threadsafe(
+                    handle_exception(e, msg), self.event_loop
+                )
+            else:
+                tasks = [
+                    self._get_sub_nodes(
+                        child, top_level_node_name, skip_namespaces, parents
+                    )
+                    for child in children
+                ]
+                try:
+                    results = await asyncio.gather(*tasks)
+                except asyncio.TimeoutError as e:
+                    msg = "Gathered async task(s) timed out waiting for result(s)."
+                    asyncio.run_coroutine_threadsafe(
+                        handle_exception(e, msg), self.event_loop
+                    )
+                else:
+                    for child_nodes, child_attributes, child_commands in results:
+                        nodes.update(child_nodes)
+                        attributes.update(child_attributes)
+                        commands.update(child_commands)
         elif node_class == ua.NodeClass.Variable:  # Attribute
             # Check if RO or RW and call the respective creator functions.
             # access_level_set = await node.get_access_level()
