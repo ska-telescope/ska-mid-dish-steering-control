@@ -148,7 +148,7 @@ TRACE_NAMESPACE: Final = ua.Int16(22)
 PLC_PRG: Final = "Logic.Application.PLC_PRG"
 APP_STATE: Final = "Logic.Application.ApplicationState"
 CURRENT_MODE: Final = "System.CurrentMode"
-MIN_EXPECTED_SAMPLE_RATE: Final = ua.Duration(50)
+MIN_EXPECTED_SAMPLE_RATE: Final = 50
 
 
 async def handle_exception(e: Exception, msg: str = "") -> None:
@@ -1874,6 +1874,7 @@ class SteeringControlUnit:
         self,
         nodes: list[Node],
         publishing_interval: int,
+        sampling_interval: int | None,
         buffer_samples: bool = True,
         trigger_on_change: bool = True,
     ) -> list[ua.MonitoredItemCreateRequest]:
@@ -1890,11 +1891,18 @@ class SteeringControlUnit:
             Defauls to True.
         :return: List of MonitoredItemCreateRequest objects.
         """
-        sample_rate = (
-            self.min_supported_sample_rate
-            if self.min_supported_sample_rate
-            else MIN_EXPECTED_SAMPLE_RATE
+        sample_rate = ua.Duration(
+            sampling_interval
+            if sampling_interval
+            else (
+                self.min_supported_sample_rate
+                if self.min_supported_sample_rate
+                else MIN_EXPECTED_SAMPLE_RATE
+            )
         )
+        if sample_rate >= publishing_interval:
+            sample_rate = publishing_interval
+            sampling_interval = -1  # sampling defined by the publishing interval
         queue_size = ua.Counter(
             max(
                 1000 / sample_rate,  # Minimum queue for 1 sec of samples
@@ -1903,23 +1911,20 @@ class SteeringControlUnit:
             if buffer_samples
             else 0  # No queue, only latest sample is received
         )
-        data_change_filter = (
-            None
-            if trigger_on_change
-            else ua.DataChangeFilter(  # Define a filter to trigger on timestamp
-                ua.DataChangeTrigger.StatusValueTimestamp,  # Trigger
-                ua.DeadbandType.None_,  # No deadband
-            )
-        )
         # Instantiate MonitoredItemCreateRequest objects
         monitored_item_requests: list[ua.MonitoredItemCreateRequest] = []
         for i, node in enumerate(nodes):
             mparams = ua.MonitoringParameters()
             mparams.ClientHandle = ua.UInt32(i)
-            mparams.SamplingInterval = sample_rate
+            # Only set the sampling interval when given, otherwise let the server decide
+            if sampling_interval:
+                mparams.SamplingInterval = ua.Duration(sampling_interval)
+            # Set filter to also trigger on timestamp if trigger_on_change is False
+            if not trigger_on_change:
+                mparams.Filter = ua.DataChangeFilter(
+                    ua.DataChangeTrigger.StatusValueTimestamp
+                )
             mparams.QueueSize = queue_size
-            if data_change_filter:
-                mparams.Filter = data_change_filter
             mir = ua.MonitoredItemCreateRequest()
             mir.ItemToMonitor = ua.ReadValueId(node.nodeid, ua.AttributeIds.Value.value)
             mir.MonitoringMode = ua.MonitoringMode.Reporting
@@ -1934,6 +1939,7 @@ class SteeringControlUnit:
         data_queue: queue.Queue | None = None,
         bad_shutdown_callback: Callable[[str], None] | None = None,
         subscription_handler: SubscriptionHandler | None = None,
+        sampling_interval: int | None = None,
         buffer_samples: bool = True,
         trigger_on_change: bool = True,
     ) -> tuple[int | None, list[str], list[Node]]:
@@ -1991,6 +1997,7 @@ class SteeringControlUnit:
         monitored_item_requests = self._make_monitored_item_create_requests(
             subscribe_nodes,
             publishing_interval,
+            sampling_interval,
             buffer_samples,
             trigger_on_change,
         )
