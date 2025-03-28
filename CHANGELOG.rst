@@ -12,6 +12,11 @@ Changed
   - 'Physical' namespace is skipped in addition to 'Trace' and 'Parameter' when scanning the 'Server' tree during setup.
   - Any OPC-UA and asyncio timeout exceptions are caught, logged and handled gracefully to allow scanning to continue without crashing.
 
+- WOM-706: Add optional ``sampling_interval`` arg to ``subscribe()`` method:
+  
+  - The client can now request a sampling interval and the server will use the closest rate that it supports.
+  - The default value is ``None``, which means that the server will use its fastest practical rate.
+
 0.6.0
 =====
 
