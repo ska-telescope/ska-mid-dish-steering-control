@@ -1942,8 +1942,8 @@ class SteeringControlUnit:
         sampling_interval: int | None = None,
         buffer_samples: bool = True,
         trigger_on_change: bool = True,
-        requested_lifetime_count=0,
-        requested_max_keep_alive_count=0,
+        requested_lifetime_count: int = 0,
+        requested_max_keep_alive_count: int = 0,
     ) -> tuple[int | None, list[str], list[Node]]:
         """
         Subscribe to OPC-UA attributes for event updates.
