@@ -1985,7 +1985,7 @@ class SteeringControlUnit:
             parameters = ua.CreateSubscriptionParameters(
                 RequestedPublishingInterval=publishing_interval,
                 RequestedLifetimeCount=requested_lifetime_count,
-                RequestedMaxKeepAliveCount=requested_max_keep_alive_count
+                RequestedMaxKeepAliveCount=requested_max_keep_alive_count,
             )
             subscription = asyncio.run_coroutine_threadsafe(
                 self._client.create_subscription(parameters, subscription_handler),
