@@ -1942,6 +1942,8 @@ class SteeringControlUnit:
         sampling_interval: int | None = None,
         buffer_samples: bool = True,
         trigger_on_change: bool = True,
+        requested_lifetime_count=0,
+        requested_max_keep_alive_count=0,
     ) -> tuple[int | None, list[str], list[Node]]:
         """
         Subscribe to OPC-UA attributes for event updates.
@@ -1980,7 +1982,11 @@ class SteeringControlUnit:
 
         # Create Subscription object
         try:
-            parameters = ua.CreateSubscriptionParameters(publishing_interval)
+            parameters = ua.CreateSubscriptionParameters(
+                RequestedPublishingInterval=publishing_interval,
+                RequestedLifetimeCount=requested_lifetime_count,
+                RequestedMaxKeepAliveCount=requested_max_keep_alive_count
+            )
             subscription = asyncio.run_coroutine_threadsafe(
                 self._client.create_subscription(parameters, subscription_handler),
                 self.event_loop,
