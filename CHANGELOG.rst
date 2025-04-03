@@ -2,15 +2,14 @@
 Changelog
 =========
 
-0.8.0
+0.7.1
 =====
 
 Changed
 -------
-- KAR-1423: Add optional ``requested_lifetime_count`` and ``requested_max_keep_alive_count`` args to ``subscribe()`` method:
+- KAR-1423: Revert ``CreateSubscriptionParameters`` change:
 
-  - The client can now request the lifetime count and the max keep alive count for subscriptions. Default values are 0.
-  - If the max keep alive count is 0 then the server will use the smallest supported count.
+  - Revert the usage of ``CreateSubscriptionParameters`` in ``subscribe()`` method
 
 0.7.0
 =====
