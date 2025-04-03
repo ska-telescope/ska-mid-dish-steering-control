@@ -1966,6 +1966,12 @@ class SteeringControlUnit:
             Defauls to True.
         :param trigger_on_change: Subscribe to data changes only, rather than all data.
             Defauls to True.
+        :param requested_lifetime_count: The maximum number of consecutive publishing
+            intervals a subscription can survive without a successful publish response
+            before it is considered expired. Defauls to 0.
+        :param requested_max_keep_alive_count: The maximum number of consecutive publishing
+            intervals without data changes before a keep-alive message is sent.
+            Defauls to 0.
         :return: tuple containing unique identifier for the subscription and lists of
             missing nodes' names and bad (failed to subscribe) nodes.
         """
