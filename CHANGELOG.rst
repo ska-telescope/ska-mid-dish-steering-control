@@ -2,6 +2,16 @@
 Changelog
 =========
 
+0.8.0
+=====
+
+Changed
+-------
+- KAR-1423: Add optional ``requested_lifetime_count`` and ``requested_max_keep_alive_count`` args to ``subscribe()`` method:
+
+  - The client can now request the lifetime count and the max keep alive count for subscriptions. Default values are 0.
+  - If the max keep alive count is 0 then the server will use the smallest supported count.
+
 0.7.0
 =====
 
@@ -16,11 +26,6 @@ Changed
   
   - The client can now request a sampling interval and the server will use the closest rate that it supports.
   - The default value is ``None``, which means that the server will use its fastest practical rate.
-
-- KAR-1423: Add optional ``requested_lifetime_count`` and ``requested_max_keep_alive_count`` args to ``subscribe()`` method:
-
-  - The client can now request the lifetime count and the max keep alive count for subscriptions. Default values are 0.
-  - If the max keep alive count is 0 then the server will use the smallest supported count.
 
 0.6.0
 =====
