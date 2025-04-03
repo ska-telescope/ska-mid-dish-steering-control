@@ -1982,8 +1982,7 @@ class SteeringControlUnit:
         try:
             subscription = asyncio.run_coroutine_threadsafe(
                 self._client.create_subscription(
-                    publishing_interval,
-                    subscription_handler
+                    publishing_interval, subscription_handler
                 ),
                 self.event_loop,
             ).result()
