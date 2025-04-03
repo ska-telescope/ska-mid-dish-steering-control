@@ -1980,9 +1980,10 @@ class SteeringControlUnit:
 
         # Create Subscription object
         try:
-            parameters = ua.CreateSubscriptionParameters(publishing_interval)
             subscription = asyncio.run_coroutine_threadsafe(
-                self._client.create_subscription(parameters, subscription_handler),
+                self._client.create_subscription(
+                    publishing_interval, subscription_handler
+                ),
                 self.event_loop,
             ).result()
         except Exception as e:

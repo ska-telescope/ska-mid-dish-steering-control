@@ -2,6 +2,15 @@
 Changelog
 =========
 
+0.7.1
+=====
+
+Changed
+-------
+- KAR-1423: Revert ``CreateSubscriptionParameters`` change:
+
+  - Revert the usage of ``CreateSubscriptionParameters`` in ``subscribe()`` method
+
 0.7.0
 =====
 
