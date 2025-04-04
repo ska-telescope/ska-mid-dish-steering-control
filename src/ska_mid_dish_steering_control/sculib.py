@@ -1168,15 +1168,15 @@ class SteeringControlUnit:
         # Check cache file format
         try:
             # Pop an item and return to check load success.
-            a, b = data.popitem()
-            data[a] = b
-        except (AttributeError, KeyError):
+            server, val = data.popitem()
+            data[server] = val
+            node, node_details = data[server]["node_ids"].popitem()
+            data[server]["node_ids"][node] = node_details
+        except (AttributeError, KeyError, TypeError):
             # No file or empty dict.
             return None
 
-        c, test_details = data[a]["node_ids"].popitem()
-        data[a]["node_ids"][c] = test_details
-        if isinstance(test_details, list):
+        if isinstance(node_details, list):
             # Old format, update file to use dicts for node details.
             for server_id, server_info in data.items():
                 for scu_node_str, node_info in server_info["node_ids"].items():
@@ -1223,13 +1223,14 @@ class SteeringControlUnit:
         cached_data: dict[str, CachedNodesDict] = (
             self._retreive_cached_data(file_path) or {}
         )
-        cached_data[self._server_str_id] = {
-            "node_ids": node_ids,  # type: ignore
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w+", encoding="UTF-8") as file:
-            json.dump(cached_data, file, indent=4, sort_keys=True)
+        if self._server_str_id:
+            cached_data[self._server_str_id] = {
+                "node_ids": node_ids,  # type: ignore
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w+", encoding="UTF-8") as file:
+                json.dump(cached_data, file, indent=4, sort_keys=True)
 
     def _populate_node_dicts(self) -> None:
         """
