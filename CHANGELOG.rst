@@ -2,14 +2,24 @@
 Changelog
 =========
 
+All notable changes to this project will be documented in this file.
+
+The format is based on `Keep a Changelog <https://keepachangelog.com/en/1.1.0/>`_,
+and this project adheres to `Semantic Versioning <https://semver.org/spec/v2.0.0.html>`_.
+
+Unreleased
+==========
+
+Fixed
+-----
+WOM-712: Check for a corrupted/empty nested dictionary in the JSON cache file to prevent a ``KeyError`` when attempting to retrieve the cached server nodes.
+
 0.7.1
 =====
 
-Changed
--------
-- KAR-1423: Revert ``CreateSubscriptionParameters`` change:
-
-  - Revert the usage of ``CreateSubscriptionParameters`` in ``subscribe()`` method
+Fixed
+-----
+- KAR-1423: Revert the usage of ``CreateSubscriptionParameters`` in ``subscribe()`` method.
 
 0.7.0
 =====
